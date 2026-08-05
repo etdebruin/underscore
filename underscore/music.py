@@ -60,19 +60,16 @@ def _osc(freq: float, t: np.ndarray, wave: str, phase: float) -> np.ndarray:
 
 
 def _lowpass(x: np.ndarray, sr: int, cutoff_hz: float) -> np.ndarray:
-    # One-pole lowpass, applied twice for a gentler top end.
+    # One-pole lowpass approximated by a truncated exponential FIR kernel
+    # (vectorized; the recursive form was a per-sample Python loop). Applied
+    # twice for a gentler top end.
     alpha = 1.0 - np.exp(-2 * np.pi * cutoff_hz / sr)
+    taps = int(np.ceil(np.log(1e-4) / np.log(1.0 - alpha)))
+    kernel = alpha * (1.0 - alpha) ** np.arange(max(taps, 2))
+    kernel /= kernel.sum()
     y = x
     for _ in range(2):
-        out = np.empty_like(y)
-        acc = 0.0
-        for i in range(0, len(y), 4096):
-            chunk = y[i : i + 4096]
-            # vectorized IIR via lfilter-style recurrence in blocks
-            for j in range(len(chunk)):
-                acc += alpha * (chunk[j] - acc)
-                out[i + j] = acc
-        y = out
+        y = np.convolve(y, kernel)[: len(x)]
     return y
 
 

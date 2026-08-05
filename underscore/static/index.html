@@ -569,14 +569,19 @@ function renderInspector() {
     <input type="text" id="f-reason" value="${(cue.reason || "").replace(/"/g, "&quot;")}" placeholder="scene description (drives the music prompt)">
     <button class="danger" id="f-delete">Delete</button>`;
   const upd = (fn) => (e) => { fn(e); afterCueEdit(); };
+  // numeric fields: ignore empty/garbage input instead of poisoning the cue with NaN
+  const num = (fn) => (e) => {
+    const v = Number(e.target.value);
+    if (Number.isFinite(v)) { fn(v); afterCueEdit(); } else renderInspector();
+  };
   $("f-mood").onchange = upd((e) => (cue.mood = e.target.value));
   $("f-reason").onchange = upd((e) => (cue.reason = e.target.value));
   if (selected.kind === "insert") {
-    $("f-time").onchange = upd((e) => (cue.time = +e.target.value));
-    $("f-dur").onchange = upd((e) => (cue.duration = Math.min(Math.max(+e.target.value, 2), 12)));
+    $("f-time").onchange = num((v) => (cue.time = Math.max(0, v)));
+    $("f-dur").onchange = num((v) => (cue.duration = Math.min(Math.max(v, 2), 12)));
   } else {
-    $("f-start").onchange = upd((e) => (cue.start = +e.target.value));
-    $("f-end").onchange = upd((e) => (cue.end = +e.target.value));
+    $("f-start").onchange = num((v) => (cue.start = Math.max(0, v)));
+    $("f-end").onchange = num((v) => (cue.end = v));
   }
   $("f-delete").onclick = () => {
     (selected.kind === "insert" ? inserts() : underlays()).splice(selected.index, 1);
@@ -647,6 +652,16 @@ function stopPlayback() {
 function startPlayback(fromOut) {
   if (!audio.voiceBuf) return;
   stopPlayback();
+  try {
+    schedulePlayback(fromOut);
+  } catch (err) {
+    stopPlayback();   // never leave orphaned sounding nodes behind
+    $("status").textContent = `playback error: ${err.message}`;
+    console.error(err);
+  }
+}
+
+function schedulePlayback(fromOut) {
   const ctx = audio.ctx, t0 = ctx.currentTime + 0.05;
   audio.startedAt = t0; audio.offset = fromOut;
   // voice: one source per segment between insert gaps
@@ -693,7 +708,8 @@ function startPlayback(fromOut) {
 function tickPlayhead() {
   if (!audio.playing) return;
   const pos = audio.offset + (audio.ctx.currentTime - audio.startedAt);
-  if (pos >= outDuration()) { stopPlayback(); return; }
+  const total = outDuration();
+  if (total > 0 && pos >= total) { stopPlayback(); return; }
   const px = pos * pxPerSec, tl = $("timeline");
   $("playhead").style.left = px + "px";
   if (follow && (px < tl.scrollLeft || px > tl.scrollLeft + tl.clientWidth - 60)) {
@@ -706,8 +722,22 @@ function tickPlayhead() {
 
 $("play").onclick = async () => {
   stopAudition();
-  if (audio.playing) { audio.offset += audio.ctx.currentTime - audio.startedAt; stopPlayback(); }
-  else { await loadAssets(); await audio.ctx.resume(); startPlayback(audio.offset || 0); }
+  if (audio.playing) {
+    audio.offset += audio.ctx.currentTime - audio.startedAt;
+    stopPlayback();
+    return;
+  }
+  if ($("play").disabled) return;
+  $("play").disabled = true;
+  $("play").textContent = "Loading";      // a 30-min wav takes a moment to decode
+  try {
+    await loadAssets();
+    await audio.ctx.resume();
+    startPlayback(audio.offset || 0);
+  } finally {
+    $("play").disabled = false;
+    if (!audio.playing) $("play").textContent = "Play";
+  }
 };
 $("ruler").onclick = (e) => {
   const x = e.clientX - $("lanes").getBoundingClientRect().left;
