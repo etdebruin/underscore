@@ -127,6 +127,15 @@ def test_projects_listed(tmp_path):
     assert {p["name"] for p in listing} == {"a.wav", "b.wav"}
 
 
+def test_transcript_endpoint_returns_sentences(tmp_path):
+    client = _client(tmp_path)
+    pid = client.post(
+        "/api/projects", files={"file": ("e.wav", _wav_bytes(), "audio/wav")}
+    ).json()["id"]
+    sentences = client.get(f"/api/projects/{pid}/transcript").json()
+    assert sentences == [{"start": 0.1, "end": 1.0, "text": "hello world."}]
+
+
 def test_library_endpoint(tmp_path):
     client = _client(tmp_path)
     assert client.get("/api/library").json() == []

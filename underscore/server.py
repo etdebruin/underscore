@@ -175,6 +175,13 @@ def create_app(
                 "has_scored": (p.root / "scored.mp3").exists(),
                 "has_peaks": (p.root / "peaks.json").exists()}
 
+    @app.get("/api/projects/{pid}/transcript")
+    def transcript(pid: str):
+        p = project(pid)
+        if not (p.root / "transcript.json").exists():
+            raise HTTPException(404, "transcript not ready")
+        return p.transcript().sentences()
+
     @app.get("/api/projects/{pid}/peaks")
     def peaks(pid: str):
         p = project(pid)

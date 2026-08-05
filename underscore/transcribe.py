@@ -18,6 +18,21 @@ class Transcript:
     words: list[Word]
     duration: float
 
+    def sentences(self) -> list[dict]:
+        """Group words into sentences with start/end times, for display."""
+        out: list[dict] = []
+        current: list[Word] = []
+        for w in self.words:
+            current.append(w)
+            if w.text.endswith((".", "!", "?")):
+                out.append({"start": current[0].start, "end": current[-1].end,
+                            "text": " ".join(x.text for x in current)})
+                current = []
+        if current:
+            out.append({"start": current[0].start, "end": current[-1].end,
+                        "text": " ".join(x.text for x in current)})
+        return out
+
     def speech_spans(self, join_gap: float = 0.35) -> list[tuple[float, float]]:
         """Merge word timings into continuous speech spans."""
         spans: list[list[float]] = []

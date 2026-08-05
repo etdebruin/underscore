@@ -38,6 +38,8 @@
   button:disabled { opacity: 0.45; cursor: default; }
   button.primary { background: var(--accent); color: oklch(0.2 0.02 60); border-color: transparent; font-weight: 600; }
   button.primary:hover { background: oklch(0.83 0.13 70); }
+  button.icon { padding: 6px; display: inline-flex; align-items: center; justify-content: center; }
+  button.icon svg, .clip-play svg { width: 17px; height: 17px; display: block; }
 
   header {
     display: flex; align-items: center; gap: 14px; padding: 10px 16px;
@@ -93,7 +95,23 @@
   #time { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 0.9rem; min-width: 130px; }
   #zoom { width: 120px; accent-color: var(--accent); padding: 0; border: none; background: none; }
 
+  #middle { flex: 1; display: flex; min-height: 0; }
   #timeline { flex: 1; overflow: auto; position: relative; }
+  #transcript {
+    width: 340px; flex-shrink: 0; overflow-y: auto;
+    border-left: 1px solid var(--line); background: var(--panel);
+    padding: 12px 0; font-size: 0.88rem; line-height: 1.5;
+  }
+  .sentence {
+    padding: 5px 16px; cursor: pointer; color: var(--muted);
+    transition: color 150ms ease-out, background 150ms ease-out;
+  }
+  .sentence:hover { background: var(--panel-2); color: var(--text); }
+  .sentence.active { background: var(--panel-2); color: var(--text); }
+  .sentence .ts {
+    font-variant-numeric: tabular-nums; font-size: 0.72rem;
+    color: var(--accent); margin-right: 8px;
+  }
   #lanes { position: relative; min-width: 100%; }
   .lane-label {
     position: sticky; left: 0; font-size: 0.7rem; text-transform: uppercase;
@@ -170,7 +188,7 @@
   <label><input type="checkbox" id="fx-warm" checked> warm</label>
   <label><input type="checkbox" id="fx-level" checked> level</label>
   <button id="render" class="primary" disabled>Render</button>
-  <a id="download" style="display:none"><button>Download MP3</button></a>
+  <a id="download" style="display:none"><button class="icon" title="download scored MP3"></button></a>
 </header>
 <main>
   <aside>
@@ -188,9 +206,10 @@
     </div>
     <div id="editor" style="display:none; flex:1; flex-direction:column; min-height:0; position:relative;">
       <div id="transport">
-        <button id="play">Play</button>
+        <button id="play" class="icon" title="play / pause (space)"></button>
         <span id="time">0:00.0 / 0:00.0</span>
-        <button id="fit" title="fit whole track">Fit</button>
+        <button id="fit" class="icon" title="fit whole track"></button>
+        <button id="toggle-transcript" class="icon" title="transcript"></button>
         <input type="range" id="zoom" min="0" max="100" value="0" title="zoom">
         <span class="hint" style="color:var(--muted); font-size:0.8rem;">drag blocks to retime, click to edit &middot; dashed = placeholder music until first render</span>
       </div>
@@ -203,17 +222,20 @@
         </div>
       </div>
       <div id="renderpill">Rendering master</div>
-      <div id="timeline">
-        <div id="lanes">
-          <div id="ruler"></div>
-          <div class="lane-label">Voice</div>
-          <div id="voicelane"><canvas id="wave"></canvas></div>
-          <div class="lane-label">Stings</div>
-          <div id="stinglane" class="lane"></div>
-          <div class="lane-label">Beds</div>
-          <div id="bedlane" class="lane"></div>
-          <div id="playhead" style="left:0"></div>
+      <div id="middle">
+        <div id="timeline">
+          <div id="lanes">
+            <div id="ruler"></div>
+            <div class="lane-label">Voice</div>
+            <div id="voicelane"><canvas id="wave"></canvas></div>
+            <div class="lane-label">Stings</div>
+            <div id="stinglane" class="lane"></div>
+            <div class="lane-label">Beds</div>
+            <div id="bedlane" class="lane"></div>
+            <div id="playhead" style="left:0"></div>
+          </div>
         </div>
+        <div id="transcript" style="display:none"></div>
       </div>
       <div id="inspector"><span class="hint">Select a block to edit its cue.</span></div>
     </div>
@@ -222,6 +244,16 @@
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
+const ICONS = {
+  play: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5l13 7.5-13 7.5z"/></svg>',
+  pause: '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>',
+  stop: '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6.5" y="6.5" width="11" height="11" rx="1.5"/></svg>',
+  loading: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 3a9 9 0 1 0 9 9"><animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="0.9s" repeatCount="indefinite"/></path></svg>',
+  fit: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12H2m3 0l3-3m-3 3l3 3M19 12h3m-3 0l-3-3m3 3l-3 3M12 5v14"/></svg>',
+  transcript: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 11h16M4 16h9"/></svg>',
+  download: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11m0 0l-4.5-4.5M12 15l4.5-4.5M4.5 20h15"/></svg>',
+  trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9.5 7V4.5h5V7m-8 0l.8 13h9.4l.8-13"/></svg>',
+};
 const MOODS = ["warm", "tense", "wistful", "uplifting", "mysterious"];
 const moodColor = (m) => getComputedStyle(document.documentElement).getPropertyValue(`--${MOODS.includes(m) ? m : "warm"}`);
 const PRE = 0.8, POST = 1.4;
@@ -250,6 +282,11 @@ let selected = null;     // {kind, index}
 let audio = { ctx: null, voiceBuf: null, clipBufs: {}, playing: false, nodes: [], startedAt: 0, offset: 0 };
 let follow = true;        // auto-scroll with the playhead
 let progScroll = false;   // distinguishes our scrolls from the user's
+let sentences = null;     // transcript sentences [{start, end, text}]
+let transcriptOn = localStorage.getItem("underscore.transcript") === "1";
+let activeSentence = -1;
+let sentUserScrollUntil = 0;
+let progSentScroll = false;
 let saveTimer = null;
 
 // ---------- undo/redo: snapshots of the cue sheet ----------
@@ -325,7 +362,7 @@ async function refreshLibrary() {
     el.innerHTML = `<span class="dot" style="background:${moodColor(c.mood)}"></span>
       <span class="name">${c.description || c.mood}</span>
       <span class="sub">${Math.round(c.length_ms / 1000)}s</span>
-      <button class="clip-play" title="audition">&#9658;</button>`;
+      <button class="clip-play" title="audition">${ICONS.play}</button>`;
     el.querySelector(".clip-play").onclick = (e) => {
       e.stopPropagation();
       playAudition(`/api/library/${c.clip_id}/audio`, c.clip_id, e.currentTarget);
@@ -352,11 +389,11 @@ function playAudition(url, key, btn) {
   audition.el.src = url;
   audition.el.play();
   audition.key = key; audition.btn = btn;
-  btn.innerHTML = "&#9632;";
+  btn.innerHTML = ICONS.stop;
 }
 function stopAudition() {
   audition.el.pause();
-  if (audition.btn) audition.btn.innerHTML = "&#9658;";
+  if (audition.btn) audition.btn.innerHTML = ICONS.play;
   audition.key = null; audition.btn = null;
 }
 
@@ -372,8 +409,10 @@ async function openProject(id) {
   stopPlayback();
   project = await api(`/api/projects/${id}`);
   project.id = id;
-  peaks = null; selected = null;
+  peaks = null; selected = null; sentences = null;
+  $("transcript").innerHTML = "";
   history.undo = []; history.redo = [];
+  setTranscriptVisible(transcriptOn);
   audio.voiceBuf = null; audio.clipBufs = {};
   $("empty").style.display = "none";
   $("editor").style.display = "flex";
@@ -439,6 +478,7 @@ async function loadAssets() {
     const resp = await fetch(`/api/projects/${project.id}/audio/voice`);
     audio.voiceBuf = await audio.ctx.decodeAudioData(await resp.arrayBuffer());
   }
+  if (transcriptOn) ensureTranscript();
   loadClipBuffers();
 }
 
@@ -572,6 +612,63 @@ function fillWavePath(ctx, top, bot, w, mid, colorVar) {
   }
 }
 
+// ---------- transcript panel ----------
+async function ensureTranscript() {
+  if (sentences || !project) return;
+  try { sentences = await api(`/api/projects/${project.id}/transcript`); } catch { return; }
+  renderTranscript();
+}
+
+function renderTranscript() {
+  const panel = $("transcript");
+  panel.innerHTML = "";
+  if (!sentences) return;
+  sentences.forEach((s, i) => {
+    const el = document.createElement("div");
+    el.className = "sentence";
+    el.dataset.i = i;
+    el.innerHTML = `<span class="ts">${fmt(s.start)}</span>${s.text}`;
+    el.onclick = () => seekToOut(shift(s.start));
+    panel.appendChild(el);
+  });
+  activeSentence = -1;
+}
+
+function setTranscriptVisible(on) {
+  transcriptOn = on;
+  localStorage.setItem("underscore.transcript", on ? "1" : "0");
+  $("transcript").style.display = on ? "block" : "none";
+  $("toggle-transcript").classList.toggle("primary", on);
+  if (on) ensureTranscript();
+  layout();   // timeline width changed
+}
+
+function highlightSentence(origTime) {
+  if (!transcriptOn || !sentences || origTime === null) return;
+  let lo = 0, hi = sentences.length - 1, idx = -1;
+  while (lo <= hi) {
+    const m = (lo + hi) >> 1;
+    if (sentences[m].start <= origTime) { idx = m; lo = m + 1; } else hi = m - 1;
+  }
+  if (idx === activeSentence) return;
+  const panel = $("transcript");
+  panel.querySelector(".sentence.active")?.classList.remove("active");
+  activeSentence = idx;
+  if (idx < 0) return;
+  const el = panel.children[idx];
+  el.classList.add("active");
+  if (performance.now() > sentUserScrollUntil) {
+    progSentScroll = true;
+    el.scrollIntoView({ block: "nearest" });
+  }
+}
+
+$("toggle-transcript").onclick = () => setTranscriptVisible(!transcriptOn);
+$("transcript").addEventListener("scroll", () => {
+  if (progSentScroll) progSentScroll = false;
+  else sentUserScrollUntil = performance.now() + 2500;   // user browsing: hold autoscroll
+});
+
 // ---------- cue clip audition (Space with a block selected) ----------
 let cuePreview = { node: null, key: null };
 function stopCuePreview() {
@@ -624,7 +721,7 @@ function renderInspector() {
     <label>mood <select id="f-mood">${moodOpts}</select></label>
     ${fields}
     <input type="text" id="f-reason" value="${(cue.reason || "").replace(/"/g, "&quot;")}" placeholder="scene description (drives the music prompt)">
-    <button class="danger" id="f-delete">Delete</button>`;
+    <button class="danger icon" id="f-delete" title="delete cue">${ICONS.trash}</button>`;
   const upd = (fn) => (e) => { const before = snapCues(); fn(e); recordHistory(before); afterCueEdit(); };
   // numeric fields: ignore empty/garbage input instead of poisoning the cue with NaN
   const num = (fn) => (e) => {
@@ -711,7 +808,7 @@ function dragGrip(e, el, index) {
 function stopPlayback() {
   audio.nodes.forEach((n) => { try { n.stop(); } catch {} });
   audio.nodes = []; audio.playing = false;
-  $("play").textContent = "Play";
+  $("play").innerHTML = ICONS.play;
 }
 
 function startPlayback(fromOut) {
@@ -766,7 +863,7 @@ function schedulePlayback(fromOut) {
   underlays().forEach((u, idx) => place(`underlay:${idx}`, shift(u.start), shift(u.end) - shift(u.start), 0.22));
   audio.playing = true;
   follow = true;
-  $("play").textContent = "Pause";
+  $("play").innerHTML = ICONS.pause;
   tickPlayhead();
 }
 
@@ -782,6 +879,7 @@ function tickPlayhead() {
     tl.scrollLeft = px - 80;
   }
   $("time").textContent = `${fmt(pos)} / ${fmt(outDuration())}`;
+  highlightSentence(unshift(pos));
   requestAnimationFrame(tickPlayhead);
 }
 
@@ -794,23 +892,28 @@ $("play").onclick = async () => {
   }
   if ($("play").disabled) return;
   $("play").disabled = true;
-  $("play").textContent = "Loading";      // a 30-min wav takes a moment to decode
+  $("play").innerHTML = ICONS.loading;    // a 30-min wav takes a moment to decode
   try {
     await loadAssets();
     await audio.ctx.resume();
     startPlayback(audio.offset || 0);
   } finally {
     $("play").disabled = false;
-    if (!audio.playing) $("play").textContent = "Play";
+    if (!audio.playing) $("play").innerHTML = ICONS.play;
   }
 };
+function seekToOut(outSec) {
+  audio.offset = Math.min(Math.max(outSec, 0), outDuration());
+  follow = true;
+  $("playhead").style.left = audio.offset * pxPerSec + "px";
+  $("time").textContent = `${fmt(audio.offset)} / ${fmt(outDuration())}`;
+  highlightSentence(unshift(audio.offset));
+  if (audio.playing) startPlayback(audio.offset);   // jump there, keep playing
+}
+
 function seekAt(e) {
   const x = Math.max(e.clientX - $("lanes").getBoundingClientRect().left, 0);
-  audio.offset = Math.min(x / pxPerSec, outDuration());
-  follow = true;
-  $("playhead").style.left = x + "px";
-  $("time").textContent = `${fmt(audio.offset)} / ${fmt(outDuration())}`;
-  if (audio.playing) startPlayback(audio.offset);   // jump there, keep playing
+  seekToOut(x / pxPerSec);
 }
 $("ruler").onclick = seekAt;
 $("voicelane").onclick = seekAt;
@@ -862,6 +965,10 @@ $("render").onclick = async () => {
   project.status = "rendering"; setStatus(); pollUntilReady();
 };
 
+$("play").innerHTML = ICONS.play;
+$("fit").innerHTML = ICONS.fit;
+$("toggle-transcript").innerHTML = ICONS.transcript;
+$("download").querySelector("button").innerHTML = ICONS.download;
 window.onresize = () => setZoom(pxPerSec);
 $("timeline").addEventListener("scroll", () => {
   if (progScroll) {
