@@ -5,7 +5,7 @@ description = "Analyze a podcast voice track and score it with background music"
 requires-python = ">=3.11"
 dependencies = [
     "anthropic>=0.92.0",
-    "mlx-whisper>=0.4.0",
+    "mlx-whisper>=0.4.0; sys_platform == 'darwin' and platform_machine == 'arm64'",
     "numpy>=1.26",
     "soundfile>=0.12",
     "pydantic>=2.0",

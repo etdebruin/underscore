@@ -45,7 +45,13 @@ class Transcript:
 
 
 def transcribe(audio_path: str) -> Transcript:
-    import mlx_whisper
+    try:
+        import mlx_whisper
+    except ImportError as exc:
+        raise RuntimeError(
+            "transcription requires mlx-whisper, which only installs on macOS "
+            "with Apple Silicon"
+        ) from exc
 
     result = mlx_whisper.transcribe(
         audio_path, path_or_hf_repo=WHISPER_MODEL, word_timestamps=True

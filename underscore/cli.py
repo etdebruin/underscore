@@ -16,6 +16,7 @@ import soundfile as sf
 
 from .analyze import analyze
 from .cues import CueSheet, Insert, Underlay
+from .env import load_dotenv, preflight
 from .library import Library, catalog_text
 from .mix import assemble
 from .transcribe import transcribe
@@ -33,19 +34,10 @@ def _loudnorm(in_path: str, out_path: str) -> None:
     )
 
 
-def _load_dotenv() -> None:
-    env = Path(".env")
-    if not env.exists():
-        return
-    for line in env.read_text().splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            key, _, value = line.partition("=")
-            os.environ.setdefault(key.strip(), value.strip())
-
-
 def main(argv: list[str] | None = None) -> int:
-    _load_dotenv()
+    load_dotenv()
+    for note in preflight():
+        print(f"note: {note}", file=sys.stderr)
     parser = argparse.ArgumentParser(description="Score a podcast voice track with music")
     parser.add_argument("input", help="Voice track (any format ffmpeg reads)")
     parser.add_argument("-o", "--output", required=True, help="Output file (.wav/.mp3/.m4a)")
