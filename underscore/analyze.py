@@ -50,6 +50,9 @@ class InsertCue(BaseModel):
     duration: float = Field(description="Sting length in seconds, 3-8")
     mood: str
     reason: str
+    clip_id: str | None = Field(
+        None, description="Reuse this existing library clip; null to generate new music"
+    )
 
 
 class UnderlayCue(BaseModel):
@@ -57,6 +60,9 @@ class UnderlayCue(BaseModel):
     end: float
     mood: str
     reason: str
+    clip_id: str | None = Field(
+        None, description="Reuse this existing library clip; null to generate new music"
+    )
 
 
 class RawCueSheet(BaseModel):
@@ -81,14 +87,26 @@ def _timed_transcript(transcript: Transcript) -> str:
     return "\n".join(lines)
 
 
-def analyze(transcript: Transcript, client=None, scoring: str = "standard") -> CueSheet:
+def analyze(
+    transcript: Transcript,
+    client=None,
+    scoring: str = "standard",
+    catalog: str = "",
+) -> CueSheet:
     import anthropic
 
     client = client or anthropic.Anthropic()
+    system = f"{SYSTEM}\n\n{DENSITY.get(scoring, DENSITY['standard'])}"
+    if catalog:
+        system += (
+            f"\n\n{catalog}\n\nReusing a clip keeps the show sonically consistent and is "
+            "free; set clip_id when a clip's mood and original scene fit the new moment. "
+            "Set clip_id to null when the moment deserves bespoke music."
+        )
     response = client.messages.parse(
         model=MODEL,
         max_tokens=4096,
-        system=f"{SYSTEM}\n\n{DENSITY.get(scoring, DENSITY['standard'])}",
+        system=system,
         messages=[
             {
                 "role": "user",

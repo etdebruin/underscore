@@ -16,6 +16,7 @@ import soundfile as sf
 
 from .analyze import analyze
 from .cues import CueSheet, Insert, Underlay
+from .library import Library, catalog_text
 from .mix import assemble
 from .transcribe import transcribe
 from .voicefx import process_voice
@@ -85,7 +86,9 @@ def main(argv: list[str] | None = None) -> int:
         )
     else:
         print(f"[2/4] Asking Claude for a cue sheet ({args.scoring} scoring) ...", flush=True)
-        sheet = analyze(transcript, scoring=args.scoring)
+        library = Library()
+        sheet = analyze(transcript, scoring=args.scoring,
+                        catalog=catalog_text(library.catalog()))
 
     sheet_json = json.dumps(dataclasses.asdict(sheet), indent=2)
     for ins in sheet.inserts:

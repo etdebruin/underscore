@@ -1,22 +1,20 @@
 """Real music beds via the ElevenLabs Music API.
 
-Clips are cached on disk keyed by (prompt, length), so editing a cue sheet and
-re-rendering doesn't re-bill generation credits.
+Every generated clip is stored in the local music library (audio + metadata),
+keyed by (prompt, length) — so editing a cue sheet and re-rendering doesn't
+re-bill credits, and the analyzer can deliberately reuse clips by id.
 """
 
 import hashlib
 import os
-import subprocess
-import tempfile
-from pathlib import Path
 
 import numpy as np
-import soundfile as sf
+
+from .library import Library
 
 API_URL = "https://api.elevenlabs.io/v1/music"
 MIN_LENGTH_MS = 3000
 MAX_LENGTH_MS = 600_000
-TARGET_PEAK = 0.7
 
 # House style: modern public-radio news podcast ("The Daily"-adjacent) — minimal,
 # rhythmic, motif-driven chamber instrumentation rather than washy pads.
@@ -79,43 +77,28 @@ def _default_fetcher(prompt: str, length_ms: int) -> bytes:
 
 
 class ElevenLabsMusic:
-    def __init__(self, api_key: str | None = None, cache_dir: str | Path | None = None,
+    def __init__(self, api_key: str | None = None, library: Library | None = None,
                  fetcher=None):
         self.api_key = api_key or os.environ.get("ELEVENLABS_API_KEY")
-        self.cache_dir = Path(cache_dir or Path.home() / ".cache" / "underscore" / "music")
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.library = library or Library()
         self.fetcher = fetcher or _default_fetcher
 
-    def bed(self, mood: str, duration: float, sr: int, seed: int = 0, reason: str = "") -> np.ndarray:
-        """Return a stereo float32 clip of exactly `duration` seconds."""
+    def bed(self, mood: str, duration: float, sr: int, seed: int = 0,
+            reason: str = "", clip_id: str | None = None) -> np.ndarray:
+        """Return a stereo float32 clip of exactly `duration` seconds.
+
+        A known `clip_id` is served straight from the library; otherwise a clip
+        is generated (or found by its prompt hash) and registered for reuse.
+        """
+        if clip_id and self.library.has(clip_id):
+            return self.library.load(clip_id, duration, sr)
+
         prompt = build_prompt(mood, reason)
         length_ms = min(max(int(duration * 1000), MIN_LENGTH_MS), MAX_LENGTH_MS)
         key = hashlib.sha256(f"{prompt}|{length_ms}".encode()).hexdigest()[:24]
-        cached = self.cache_dir / f"{key}.audio"
 
-        if not cached.exists():
-            cached.write_bytes(self.fetcher(prompt, length_ms))
-
-        clip = self._decode(cached, sr)
-        n = round(duration * sr)
-        if clip.shape[0] >= n:
-            clip = clip[:n]
-        else:  # loop with a short crossfade to reach the target length
-            reps = int(np.ceil(n / clip.shape[0]))
-            clip = np.tile(clip, (reps, 1))[:n]
-        peak = np.max(np.abs(clip))
-        if peak > 0:
-            clip = clip * (TARGET_PEAK / peak)
-        return clip.astype(np.float32)
-
-    @staticmethod
-    def _decode(path: Path, sr: int) -> np.ndarray:
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-            subprocess.run(
-                ["ffmpeg", "-y", "-loglevel", "error", "-i", str(path),
-                 "-ac", "2", "-ar", str(sr), tmp.name],
-                check=True,
-            )
-            data, _ = sf.read(tmp.name, dtype="float32")
-        Path(tmp.name).unlink(missing_ok=True)
-        return data
+        if not self.library.has(key):
+            self.library.path_for(key).write_bytes(self.fetcher(prompt, length_ms))
+            self.library.register(key, mood=mood, description=reason,
+                                  length_ms=length_ms, prompt=prompt)
+        return self.library.load(key, duration, sr)

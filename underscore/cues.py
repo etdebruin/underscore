@@ -19,6 +19,7 @@ class Insert:
     duration: float
     mood: str
     reason: str
+    clip_id: str | None = None  # reuse this library clip instead of generating
 
 
 @dataclass
@@ -29,6 +30,7 @@ class Underlay:
     end: float
     mood: str
     reason: str
+    clip_id: str | None = None
 
 
 @dataclass
@@ -49,7 +51,8 @@ def validate_cues(raw: dict, total_duration: float) -> CueSheet:
         duration = min(max(float(item["duration"]), MIN_INSERT_DUR), MAX_INSERT_DUR)
         if inserts and time - inserts[-1].time < MIN_INSERT_SPACING:
             continue
-        inserts.append(Insert(time, duration, _mood(item.get("mood", "")), item.get("reason", "")))
+        inserts.append(Insert(time, duration, _mood(item.get("mood", "")),
+                              item.get("reason", ""), item.get("clip_id")))
 
     underlays: list[Underlay] = []
     for item in sorted(raw.get("underlays", []), key=lambda d: d["start"]):
@@ -59,6 +62,7 @@ def validate_cues(raw: dict, total_duration: float) -> CueSheet:
             continue
         if underlays and start < underlays[-1].end:
             continue
-        underlays.append(Underlay(start, end, _mood(item.get("mood", "")), item.get("reason", "")))
+        underlays.append(Underlay(start, end, _mood(item.get("mood", "")),
+                                  item.get("reason", ""), item.get("clip_id")))
 
     return CueSheet(inserts=inserts, underlays=underlays)
