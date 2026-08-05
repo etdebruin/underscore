@@ -3,6 +3,8 @@
 Score a podcast voice track with music, automatically — then fine-tune it in a
 DAW-style web editor.
 
+![The underscore editor: voice waveform with sting and bed lanes](docs/editor.png)
+
 *Underscore* (n.): music played beneath dialogue or narration. Give this tool a
 voice recording and it finds the moments that deserve music, the way a radio
 producer would:
