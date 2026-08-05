@@ -75,6 +75,17 @@ def test_peaks_available_after_upload(tmp_path):
     assert all(lo <= hi for lo, hi in peaks)
 
 
+def test_low_res_peaks_upgraded_on_read(tmp_path):
+    client = _client(tmp_path)
+    pid = client.post(
+        "/api/projects", files={"file": ("e.wav", _wav_bytes(), "audio/wav")}
+    ).json()["id"]
+    stale = tmp_path / "projects" / pid / "peaks.json"
+    stale.write_text(json.dumps([[-0.1, 0.1]] * 10))
+    peaks = client.get(f"/api/projects/{pid}/peaks").json()
+    assert len(peaks) == server.PEAK_BUCKETS
+
+
 def test_cue_roundtrip(tmp_path):
     client = _client(tmp_path)
     pid = client.post(
@@ -119,6 +130,17 @@ def test_projects_listed(tmp_path):
 def test_library_endpoint(tmp_path):
     client = _client(tmp_path)
     assert client.get("/api/library").json() == []
+
+
+def test_cue_audio_falls_back_to_synth_standin(tmp_path):
+    client = _client(tmp_path)
+    pid = client.post(
+        "/api/projects", files={"file": ("e.wav", _wav_bytes(), "audio/wav")}
+    ).json()["id"]
+    resp = client.get(f"/api/projects/{pid}/cue-audio/insert/0")
+    assert resp.status_code == 200
+    assert resp.headers["x-clip-source"] == "synth"
+    assert len(resp.content) > 1000
 
 
 def test_index_served(tmp_path):

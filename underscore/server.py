@@ -29,7 +29,7 @@ from .transcribe import Transcript, Word, transcribe
 from .voicefx import process_voice
 
 SR = 44100
-PEAK_BUCKETS = 1500
+PEAK_BUCKETS = 12000
 DEFAULT_PROJECTS_ROOT = Path.home() / ".underscore" / "projects"
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -180,7 +180,13 @@ def create_app(
         path = p.root / "peaks.json"
         if not path.exists():
             raise HTTPException(404, "peaks not ready")
-        return json.loads(path.read_text())
+        data = json.loads(path.read_text())
+        voice_path = p.root / "voice.wav"
+        if len(data) < PEAK_BUCKETS and voice_path.exists():
+            voice, _ = sf.read(voice_path, dtype="float32")
+            data = _compute_peaks(voice)
+            path.write_text(json.dumps(data))
+        return data
 
     @app.put("/api/projects/{pid}/cues")
     def save_cues(pid: str, cues: dict):
@@ -255,12 +261,24 @@ def create_app(
         if index >= len(group):
             raise HTTPException(404, "no such cue")
         cue = group[index]
+        seconds = _cue_length_s(kind, cue)
         clip_id = cue.get("clip_id")
         if not (clip_id and lib.has(clip_id)):
-            clip_id = _clip_key(cue["mood"], cue.get("reason", ""), _cue_length_s(kind, cue))
-        if not lib.has(clip_id):
-            raise HTTPException(404, "clip not generated yet")
-        return FileResponse(lib.path_for(clip_id), media_type="audio/mpeg")
+            clip_id = _clip_key(cue["mood"], cue.get("reason", ""), seconds)
+        if lib.has(clip_id):
+            return FileResponse(lib.path_for(clip_id), media_type="audio/mpeg",
+                                headers={"X-Clip-Source": "library"})
+        # Free synth stand-in so the preview always has music before first render.
+        from .music import generate_bed
+
+        cache = p.root / "previews"
+        cache.mkdir(exist_ok=True)
+        key = hashlib.sha256(f"synth|{cue['mood']}|{seconds:.1f}".encode()).hexdigest()[:16]
+        path = cache / f"{key}.wav"
+        if not path.exists():
+            sf.write(path, generate_bed(cue["mood"], seconds, SR, seed=index), SR)
+        return FileResponse(path, media_type="audio/wav",
+                            headers={"X-Clip-Source": "synth"})
 
     @app.get("/api/library")
     def library_catalog():

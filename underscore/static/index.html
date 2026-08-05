@@ -14,7 +14,8 @@
     --muted: oklch(0.62 0.012 70);
     --accent: oklch(0.78 0.13 70);
     --accent-dim: oklch(0.78 0.13 70 / 0.25);
-    --wave: oklch(0.55 0.02 70);
+    --wave: oklch(0.42 0.025 70);
+    --wave-core: oklch(0.64 0.05 75);
     --warm: oklch(0.75 0.12 65);
     --tense: oklch(0.62 0.15 25);
     --wistful: oklch(0.68 0.09 300);
@@ -101,7 +102,7 @@
   #ruler { height: 22px; position: relative; border-bottom: 1px solid var(--line); cursor: pointer; }
   .tick { position: absolute; top: 0; height: 100%; border-left: 1px solid var(--line); color: var(--muted); font-size: 0.68rem; padding: 3px 0 0 4px; user-select: none; }
   #voicelane { height: 130px; position: relative; }
-  #wave { position: absolute; inset: 0; }
+  #wave { position: absolute; top: 0; bottom: 0; left: 0; }
   .lane { position: relative; border-top: 1px solid var(--line); }
   #stinglane { height: 56px; }
   #bedlane { height: 56px; }
@@ -166,7 +167,7 @@
         <button id="play">Play</button>
         <span id="time">0:00.0 / 0:00.0</span>
         <input type="range" id="zoom" min="4" max="60" value="8" title="zoom">
-        <span class="hint" style="color:var(--muted); font-size:0.8rem;">drag blocks to retime, drag bed edges to resize, click a block to edit</span>
+        <span class="hint" style="color:var(--muted); font-size:0.8rem;">drag blocks to retime, click to edit &middot; dashed = placeholder music until first render</span>
       </div>
       <div id="timeline">
         <div id="lanes">
@@ -193,6 +194,7 @@ const PRE = 0.8, POST = 1.4;
 
 let project = null;      // {id, name, status, duration, cues, has_scored}
 let peaks = null;
+let peaksMax = null;
 let pxPerSec = 8;
 let selected = null;     // {kind, index}
 let audio = { ctx: null, voiceBuf: null, clipBufs: {}, playing: false, nodes: [], startedAt: 0, offset: 0 };
@@ -249,7 +251,7 @@ async function refreshLibrary() {
       <button class="clip-play" title="audition">&#9658;</button>`;
     el.querySelector(".clip-play").onclick = (e) => {
       e.stopPropagation();
-      new Audio(`/api/library/${c.clip_id}/audio`).play();
+      playAudition(`/api/library/${c.clip_id}/audio`, c.clip_id, e.currentTarget);
     };
     $("library").appendChild(el);
   }
@@ -264,6 +266,23 @@ $("dropzone").ondrop = (e) => {
   e.preventDefault(); $("dropzone").classList.remove("over");
   if (e.dataTransfer.files[0]) upload(e.dataTransfer.files[0]);
 };
+// one shared audition player: starting a clip stops whatever else is sounding
+const audition = { el: new Audio(), key: null, btn: null };
+audition.el.onended = () => stopAudition();
+function playAudition(url, key, btn) {
+  if (audition.key === key) return stopAudition();
+  stopAudition(); stopPlayback();
+  audition.el.src = url;
+  audition.el.play();
+  audition.key = key; audition.btn = btn;
+  btn.innerHTML = "&#9632;";
+}
+function stopAudition() {
+  audition.el.pause();
+  if (audition.btn) audition.btn.innerHTML = "&#9658;";
+  audition.key = null; audition.btn = null;
+}
+
 async function upload(file) {
   const form = new FormData();
   form.append("file", file);
@@ -314,7 +333,9 @@ async function pollUntilReady() {
 }
 
 async function loadAssets() {
-  if (!peaks) { try { peaks = await api(`/api/projects/${project.id}/peaks`); } catch {} }
+  if (!peaks) {
+    try { peaks = await api(`/api/projects/${project.id}/peaks`); peaksMax = null; } catch {}
+  }
   if (!audio.ctx) audio.ctx = new AudioContext();
   if (!audio.voiceBuf) {
     const resp = await fetch(`/api/projects/${project.id}/audio/voice`);
@@ -330,7 +351,9 @@ async function loadClipBuffers() {
     try {
       const resp = await fetch(`/api/projects/${project.id}/cue-audio/${kind}/${idx}`);
       if (!resp.ok) { audio.clipBufs[key] = null; return; }
-      audio.clipBufs[key] = await audio.ctx.decodeAudioData(await resp.arrayBuffer());
+      const source = resp.headers.get("X-Clip-Source") || "library";
+      const buf = await audio.ctx.decodeAudioData(await resp.arrayBuffer());
+      audio.clipBufs[key] = { buf, source };
     } catch { audio.clipBufs[key] = null; }
   })());
   inserts().forEach((_, i) => grab("insert", i));
@@ -359,7 +382,8 @@ function renderBlocks(kind, lane, cues, geom) {
     const { x, w, label } = geom(cue);
     const el = document.createElement("div");
     el.className = "block";
-    if (audio.clipBufs[`${kind}:${index}`] === null) el.classList.add("pending");
+    const entry = audio.clipBufs[`${kind}:${index}`];
+    if (!entry || entry.source !== "library") el.classList.add("pending");
     if (selected && selected.kind === kind && selected.index === index) el.classList.add("selected");
     el.style.left = x + "px"; el.style.width = w + "px";
     el.style.background = moodColor(cue.mood);
@@ -388,22 +412,63 @@ function drawRuler() {
 
 function drawWave() {
   const canvas = $("wave");
-  const laneW = parseFloat($("lanes").style.width) || $("timeline").clientWidth;
-  const h = $("voicelane").clientHeight;
-  canvas.width = laneW * devicePixelRatio; canvas.height = h * devicePixelRatio;
-  canvas.style.width = laneW + "px"; canvas.style.height = h + "px";
+  const tl = $("timeline");
+  const viewW = tl.clientWidth, h = $("voicelane").clientHeight;
+  const scroll = tl.scrollLeft;
+  canvas.style.left = scroll + "px";           // canvas covers only the viewport
+  canvas.style.width = viewW + "px"; canvas.style.height = h + "px";
+  canvas.width = viewW * devicePixelRatio; canvas.height = h * devicePixelRatio;
   const ctx = canvas.getContext("2d");
   ctx.scale(devicePixelRatio, devicePixelRatio);
-  ctx.clearRect(0, 0, laneW, h);
+  ctx.clearRect(0, 0, viewW, h);
   if (!peaks || !project?.duration) return;
-  ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--wave");
-  const mid = h / 2, secPerBucket = project.duration / peaks.length;
-  for (let x = 0; x < laneW; x++) {
-    const t = unshift(x / pxPerSec);
-    if (t === null || t >= project.duration) continue;   // gap where a sting sits
-    const b = peaks[Math.min(Math.floor(t / secPerBucket), peaks.length - 1)];
-    const y1 = mid + b[0] * mid * 0.92, y2 = mid + b[1] * mid * 0.92;
-    ctx.fillRect(x, Math.min(y1, y2), 1, Math.max(1, Math.abs(y2 - y1)));
+  if (peaksMax === null) {
+    peaksMax = 0.02;
+    for (const [lo, hi] of peaks) peaksMax = Math.max(peaksMax, -lo, hi);
+  }
+  const mid = h / 2, amp = (mid * 0.9) / peaksMax;
+  const spb = project.duration / peaks.length;
+  const top = new Array(viewW).fill(null), bot = new Array(viewW).fill(null);
+  for (let x = 0; x < viewW; x++) {
+    const t = unshift((scroll + x) / pxPerSec);
+    if (t === null || t < 0 || t >= project.duration) continue;  // sting gap
+    const tEnd = Math.min(t + 1 / pxPerSec, project.duration);
+    const b0 = Math.min(Math.floor(t / spb), peaks.length - 1);
+    const b1 = Math.min(Math.floor(tEnd / spb), peaks.length - 1);
+    let lo, hi;
+    if (b1 <= b0 + 1) {           // zoomed in: interpolate between buckets
+      const f = Math.min(Math.max(t / spb - b0, 0), 1);
+      const a = peaks[b0], b = peaks[Math.min(b0 + 1, peaks.length - 1)];
+      lo = a[0] + (b[0] - a[0]) * f;
+      hi = a[1] + (b[1] - a[1]) * f;
+    } else {                      // zoomed out: aggregate the pixel's buckets
+      lo = 0; hi = 0;
+      for (let i = b0; i <= b1; i++) {
+        if (peaks[i][0] < lo) lo = peaks[i][0];
+        if (peaks[i][1] > hi) hi = peaks[i][1];
+      }
+    }
+    top[x] = mid - hi * amp;
+    bot[x] = mid - lo * amp;
+  }
+  fillWavePath(ctx, top, bot, viewW, mid, "--wave");
+  const shrink = (arr) => arr.map((v) => (v === null ? null : mid + (v - mid) * 0.42));
+  fillWavePath(ctx, shrink(top), shrink(bot), viewW, mid, "--wave-core");
+}
+
+function fillWavePath(ctx, top, bot, w, mid, colorVar) {
+  ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue(colorVar);
+  let x = 0;
+  while (x < w) {
+    while (x < w && top[x] === null) x++;
+    if (x >= w) break;
+    const start = x;
+    ctx.beginPath();
+    ctx.moveTo(x, Math.min(top[x], mid - 0.6));
+    for (; x < w && top[x] !== null; x++) ctx.lineTo(x + 0.5, Math.min(top[x], mid - 0.6));
+    for (let b = x - 1; b >= start; b--) ctx.lineTo(b + 0.5, Math.max(bot[b], mid + 0.6));
+    ctx.closePath();
+    ctx.fill();
   }
 }
 
@@ -531,7 +596,7 @@ function startPlayback(fromOut) {
   }
   // music clips (constant approximate gains; the render does the real ducking)
   const place = (key, outStart, dur, gain) => {
-    const buf = audio.clipBufs[key];
+    const buf = audio.clipBufs[key]?.buf;
     if (!buf || outStart + dur <= fromOut) return;
     const skip = Math.max(fromOut - outStart, 0);
     const src = ctx.createBufferSource(); src.buffer = buf;
@@ -556,12 +621,15 @@ function tickPlayhead() {
   if (!audio.playing) return;
   const pos = audio.offset + (audio.ctx.currentTime - audio.startedAt);
   if (pos >= outDuration()) { stopPlayback(); return; }
-  $("playhead").style.left = pos * pxPerSec + "px";
+  const px = pos * pxPerSec, tl = $("timeline");
+  $("playhead").style.left = px + "px";
+  if (px < tl.scrollLeft || px > tl.scrollLeft + tl.clientWidth - 60) tl.scrollLeft = px - 80;
   $("time").textContent = `${fmt(pos)} / ${fmt(outDuration())}`;
   requestAnimationFrame(tickPlayhead);
 }
 
 $("play").onclick = async () => {
+  stopAudition();
   if (audio.playing) { audio.offset += audio.ctx.currentTime - audio.startedAt; stopPlayback(); }
   else { await loadAssets(); await audio.ctx.resume(); startPlayback(audio.offset || 0); }
 };
@@ -596,6 +664,7 @@ $("render").onclick = async () => {
 };
 
 window.onresize = layout;
+$("timeline").addEventListener("scroll", () => requestAnimationFrame(drawWave));
 refreshProjects(); refreshLibrary();
 </script>
 </body>
