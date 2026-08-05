@@ -251,6 +251,31 @@ let follow = true;        // auto-scroll with the playhead
 let progScroll = false;   // distinguishes our scrolls from the user's
 let saveTimer = null;
 
+// ---------- undo/redo: snapshots of the cue sheet ----------
+const HISTORY_MAX = 100;
+const history = { undo: [], redo: [] };
+const snapCues = () => JSON.parse(JSON.stringify(project.cues));
+function recordHistory(before) {
+  history.undo.push(before);
+  if (history.undo.length > HISTORY_MAX) history.undo.shift();
+  history.redo = [];
+}
+function restoreCues(cues) {
+  project.cues = cues;
+  selected = null;
+  stopPlayback(); layout(); scheduleSave(); loadClipBuffers(); renderInspector();
+}
+function undoEdit() {
+  if (!history.undo.length || !project?.cues) return;
+  history.redo.push(snapCues());
+  restoreCues(history.undo.pop());
+}
+function redoEdit() {
+  if (!history.redo.length || !project?.cues) return;
+  history.undo.push(snapCues());
+  restoreCues(history.redo.pop());
+}
+
 // ---------- helpers ----------
 const fmt = (s) => `${Math.floor(s / 60)}:${(s % 60).toFixed(1).padStart(4, "0")}`;
 const inserts = () => project?.cues?.inserts ?? [];
@@ -347,6 +372,7 @@ async function openProject(id) {
   project = await api(`/api/projects/${id}`);
   project.id = id;
   peaks = null; selected = null;
+  history.undo = []; history.redo = [];
   audio.voiceBuf = null; audio.clipBufs = {};
   $("empty").style.display = "none";
   $("editor").style.display = "flex";
@@ -552,7 +578,7 @@ function select(kind, index) {
 
 function renderInspector() {
   const box = $("inspector");
-  if (!selected) { box.innerHTML = '<span class="hint">Select a block to edit its cue.</span>'; return; }
+  if (!selected) { box.innerHTML = '<span class="hint">Select a block to edit its cue. &#8984;Z undoes any edit or delete.</span>'; return; }
   const cue = (selected.kind === "insert" ? inserts() : underlays())[selected.index];
   if (!cue) { selected = null; return renderInspector(); }
   const moodOpts = MOODS.map((m) => `<option ${m === cue.mood ? "selected" : ""}>${m}</option>`).join("");
@@ -568,11 +594,12 @@ function renderInspector() {
     ${fields}
     <input type="text" id="f-reason" value="${(cue.reason || "").replace(/"/g, "&quot;")}" placeholder="scene description (drives the music prompt)">
     <button class="danger" id="f-delete">Delete</button>`;
-  const upd = (fn) => (e) => { fn(e); afterCueEdit(); };
+  const upd = (fn) => (e) => { const before = snapCues(); fn(e); recordHistory(before); afterCueEdit(); };
   // numeric fields: ignore empty/garbage input instead of poisoning the cue with NaN
   const num = (fn) => (e) => {
     const v = Number(e.target.value);
-    if (Number.isFinite(v)) { fn(v); afterCueEdit(); } else renderInspector();
+    if (Number.isFinite(v)) { const before = snapCues(); fn(v); recordHistory(before); afterCueEdit(); }
+    else renderInspector();
   };
   $("f-mood").onchange = upd((e) => (cue.mood = e.target.value));
   $("f-reason").onchange = upd((e) => (cue.reason = e.target.value));
@@ -584,6 +611,7 @@ function renderInspector() {
     $("f-end").onchange = num((v) => (cue.end = v));
   }
   $("f-delete").onclick = () => {
+    recordHistory(snapCues());
     (selected.kind === "insert" ? inserts() : underlays()).splice(selected.index, 1);
     selected = null; afterCueEdit(); renderInspector();
   };
@@ -608,6 +636,7 @@ function attachDrag(el, kind, index) {
   el.onpointerdown = (e) => {
     if (e.target.classList.contains("grip")) return dragGrip(e, el, index);
     const cue = (kind === "insert" ? inserts() : underlays())[index];
+    const before = snapCues();
     const startX = e.clientX;
     const orig = kind === "insert" ? cue.time : cue.start;
     const len = kind === "underlay" ? cue.end - cue.start : 0;
@@ -622,7 +651,7 @@ function attachDrag(el, kind, index) {
     };
     el.onpointerup = () => {
       el.onpointermove = el.onpointerup = null;
-      if (moved) afterCueEdit();
+      if (moved) { recordHistory(before); afterCueEdit(); }
     };
   };
 }
@@ -630,6 +659,7 @@ function attachDrag(el, kind, index) {
 function dragGrip(e, el, index) {
   e.stopPropagation();
   const cue = underlays()[index];
+  const before = snapCues();
   const left = e.target.classList.contains("l");
   const startX = e.clientX, s0 = cue.start, e0 = cue.end;
   e.target.setPointerCapture(e.pointerId);
@@ -639,7 +669,11 @@ function dragGrip(e, el, index) {
     else cue.end = Math.min(Math.max(e0 + dt, cue.start + 5), project.duration);
     layout(); if (selected) renderInspector();
   };
-  e.target.onpointerup = (ev) => { ev.target.onpointermove = ev.target.onpointerup = null; afterCueEdit(); };
+  e.target.onpointerup = (ev) => {
+    ev.target.onpointermove = ev.target.onpointerup = null;
+    if (cue.start !== s0 || cue.end !== e0) recordHistory(before);
+    afterCueEdit();
+  };
 }
 
 // ---------- playback preview (Web Audio approximation of the mix) ----------
@@ -752,8 +786,13 @@ $("voicelane").onclick = seekAt;
 $("stinglane").onclick = seekAt;   // blocks stop propagation, so empty space seeks
 $("bedlane").onclick = seekAt;
 document.body.onkeydown = (e) => {
-  if (e.code === "Space" && project && e.target.tagName !== "INPUT" && e.target.tagName !== "SELECT") {
+  const typing = e.target.tagName === "INPUT" || e.target.tagName === "SELECT";
+  if (e.code === "Space" && project && !typing) {
     e.preventDefault(); $("play").click();
+  }
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z" && !typing) {
+    e.preventDefault();
+    if (e.shiftKey) redoEdit(); else undoEdit();
   }
 };
 
@@ -775,6 +814,7 @@ $("reanalyze").onclick = async () => {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ scoring: $("scoring").value }),
   });
+  history.undo = []; history.redo = [];   // a fresh cue sheet starts fresh history
   project.status = "analyzing"; setStatus(); pollUntilReady();
 };
 $("render").onclick = async () => {
