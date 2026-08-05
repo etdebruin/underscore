@@ -247,6 +247,8 @@ function setZoom(next, anchorOutTime = null) {
 }
 let selected = null;     // {kind, index}
 let audio = { ctx: null, voiceBuf: null, clipBufs: {}, playing: false, nodes: [], startedAt: 0, offset: 0 };
+let follow = true;        // auto-scroll with the playhead
+let progScroll = false;   // distinguishes our scrolls from the user's
 let saveTimer = null;
 
 // ---------- helpers ----------
@@ -683,6 +685,7 @@ function startPlayback(fromOut) {
   inserts().forEach((i, idx) => place(`insert:${idx}`, shift(i.time) - PRE, PRE + i.duration + POST, 0.85));
   underlays().forEach((u, idx) => place(`underlay:${idx}`, shift(u.start), shift(u.end) - shift(u.start), 0.22));
   audio.playing = true;
+  follow = true;
   $("play").textContent = "Pause";
   tickPlayhead();
 }
@@ -693,7 +696,10 @@ function tickPlayhead() {
   if (pos >= outDuration()) { stopPlayback(); return; }
   const px = pos * pxPerSec, tl = $("timeline");
   $("playhead").style.left = px + "px";
-  if (px < tl.scrollLeft || px > tl.scrollLeft + tl.clientWidth - 60) tl.scrollLeft = px - 80;
+  if (follow && (px < tl.scrollLeft || px > tl.scrollLeft + tl.clientWidth - 60)) {
+    progScroll = true;
+    tl.scrollLeft = px - 80;
+  }
   $("time").textContent = `${fmt(pos)} / ${fmt(outDuration())}`;
   requestAnimationFrame(tickPlayhead);
 }
@@ -706,6 +712,7 @@ $("play").onclick = async () => {
 $("ruler").onclick = (e) => {
   const x = e.clientX - $("lanes").getBoundingClientRect().left;
   audio.offset = x / pxPerSec;
+  follow = true;
   $("playhead").style.left = x + "px";
   $("time").textContent = `${fmt(audio.offset)} / ${fmt(outDuration())}`;
   if (audio.playing) startPlayback(audio.offset);
@@ -745,7 +752,17 @@ $("render").onclick = async () => {
 };
 
 window.onresize = () => setZoom(pxPerSec);
-$("timeline").addEventListener("scroll", () => requestAnimationFrame(drawWave));
+$("timeline").addEventListener("scroll", () => {
+  if (progScroll) {
+    progScroll = false;                 // our own follow-scroll, not the user's
+  } else if (audio.playing) {
+    const tl = $("timeline");
+    const px = (audio.offset + (audio.ctx.currentTime - audio.startedAt)) * pxPerSec;
+    // user scrolled: pause following; resume if they bring the playhead back into view
+    follow = px >= tl.scrollLeft && px <= tl.scrollLeft + tl.clientWidth;
+  }
+  requestAnimationFrame(drawWave);
+});
 refreshProjects(); refreshLibrary();
 </script>
 </body>
