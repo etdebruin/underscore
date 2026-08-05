@@ -775,11 +775,15 @@ function renderInspector() {
     $("f-start").onchange = num((v) => (cue.start = Math.max(0, v)));
     $("f-end").onchange = num((v) => (cue.end = v));
   }
-  $("f-delete").onclick = () => {
-    recordHistory(snapCues());
-    (selected.kind === "insert" ? inserts() : underlays()).splice(selected.index, 1);
-    selected = null; afterCueEdit(); renderInspector();
-  };
+  $("f-delete").onclick = deleteSelected;
+}
+
+function deleteSelected() {
+  if (!selected) return;
+  stopCuePreview();
+  recordHistory(snapCues());
+  (selected.kind === "insert" ? inserts() : underlays()).splice(selected.index, 1);
+  selected = null; afterCueEdit(); renderInspector();
 }
 
 function afterCueEdit() {
@@ -966,6 +970,10 @@ document.body.onkeydown = (e) => {
   if (e.code === "Escape" && selected) {
     stopCuePreview();
     selected = null; layout(); renderInspector();
+  }
+  if ((e.code === "Backspace" || e.code === "Delete") && selected && !typing) {
+    e.preventDefault();
+    deleteSelected();
   }
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z" && !typing) {
     e.preventDefault();
