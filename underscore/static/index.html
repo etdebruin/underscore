@@ -296,6 +296,7 @@ let activeSentence = -1;
 let sentUserScrollUntil = 0;
 let progSentScroll = false;
 let saveTimer = null;
+let draggingNow = false;
 
 // ---------- undo/redo: snapshots of the cue sheet ----------
 const HISTORY_MAX = 100;
@@ -793,10 +794,17 @@ function afterCueEdit() {
 function scheduleSave() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(async () => {
-    await api(`/api/projects/${project.id}/cues`, {
+    const resp = await api(`/api/projects/${project.id}/cues`, {
       method: "PUT", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(project.cues),
     });
+    // the server snaps insert points into real silences - reflect that,
+    // unless the user is mid-drag on something else
+    if (resp.cues && !draggingNow) {
+      project.cues = resp.cues;
+      layout();
+      if (selected) renderInspector();
+    }
   }, 500);
 }
 
@@ -810,6 +818,7 @@ function attachDrag(el, kind, index) {
     const orig = kind === "insert" ? cue.time : cue.start;
     const len = kind === "underlay" ? cue.end - cue.start : 0;
     el.setPointerCapture(e.pointerId);
+    draggingNow = true;
     let moved = false;
     el.onpointermove = (ev) => {
       const dt = (ev.clientX - startX) / pxPerSec;
@@ -820,6 +829,7 @@ function attachDrag(el, kind, index) {
     };
     el.onpointerup = () => {
       el.onpointermove = el.onpointerup = null;
+      draggingNow = false;
       if (moved) { recordHistory(before); afterCueEdit(); }
     };
   };
@@ -832,6 +842,7 @@ function dragGrip(e, el, index) {
   const left = e.target.classList.contains("l");
   const startX = e.clientX, s0 = cue.start, e0 = cue.end;
   e.target.setPointerCapture(e.pointerId);
+  draggingNow = true;
   e.target.onpointermove = (ev) => {
     const dt = (ev.clientX - startX) / pxPerSec;
     if (left) cue.start = Math.max(0, Math.min(s0 + dt, cue.end - 5));
@@ -840,6 +851,7 @@ function dragGrip(e, el, index) {
   };
   e.target.onpointerup = (ev) => {
     ev.target.onpointermove = ev.target.onpointerup = null;
+    draggingNow = false;
     if (cue.start !== s0 || cue.end !== e0) recordHistory(before);
     afterCueEdit();
   };

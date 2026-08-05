@@ -24,7 +24,7 @@ from .analyze import analyze
 from .cues import CueSheet, Insert, Underlay
 from .elevenlabs_music import MIN_LENGTH_MS, build_prompt
 from .library import Library, catalog_text
-from .mix import POST_OVERLAP, PRE_OVERLAP, assemble
+from .mix import POST_OVERLAP, PRE_OVERLAP, assemble, find_gaps, snap_to_gap
 from .transcribe import Transcript, Word, transcribe
 from .voicefx import process_voice
 
@@ -50,6 +50,18 @@ def _cue_length_s(kind: str, cue: dict) -> float:
     if kind == "insert":
         return PRE_OVERLAP + float(cue["duration"]) + POST_OVERLAP
     return float(cue["end"]) - float(cue["start"])
+
+
+def _snap_inserts(sheet: CueSheet, transcript: Transcript, max_dist: float) -> CueSheet:
+    """Move insert points into real silences so the UI, preview, and render agree.
+
+    Claude proposes sentence-boundary times, which land on the onset of the
+    next sentence; the pause belongs in the silence just before it.
+    """
+    gaps = find_gaps(transcript.speech_spans(), transcript.duration)
+    for ins in sheet.inserts:
+        ins.time = round(snap_to_gap(ins.time, gaps, max_dist=max_dist), 2)
+    return sheet
 
 
 def _clip_key(mood: str, reason: str, seconds: float) -> str:
@@ -182,6 +194,7 @@ def create_app(
             }))
             p.update(status="analyzing", duration=len(voice) / SR)
             sheet = analyze_fn(transcript, p.meta()["scoring"], catalog_text(lib.catalog()))
+            sheet = _snap_inserts(sheet, transcript, max_dist=6.0)
             (p.root / "cues.json").write_text(json.dumps(dataclasses.asdict(sheet), indent=2))
             p.update(status="ready")
 
@@ -231,8 +244,11 @@ def create_app(
             inserts=[Insert(**i) for i in cues.get("inserts", [])],
             underlays=[Underlay(**u) for u in cues.get("underlays", [])],
         )
+        if (p.root / "transcript.json").exists():
+            # gentler tolerance for hand-placed cues than for Claude's proposals
+            sheet = _snap_inserts(sheet, p.transcript(), max_dist=2.0)
         (p.root / "cues.json").write_text(json.dumps(dataclasses.asdict(sheet), indent=2))
-        return {"ok": True}
+        return {"ok": True, "cues": dataclasses.asdict(sheet)}
 
     @app.post("/api/projects/{pid}/analyze")
     def reanalyze(pid: str, body: dict):
@@ -240,7 +256,9 @@ def create_app(
         p.update(status="analyzing", scoring=body.get("scoring", "standard"))
 
         def job():
-            sheet = analyze_fn(p.transcript(), p.meta()["scoring"], catalog_text(lib.catalog()))
+            transcript = p.transcript()
+            sheet = analyze_fn(transcript, p.meta()["scoring"], catalog_text(lib.catalog()))
+            sheet = _snap_inserts(sheet, transcript, max_dist=6.0)
             (p.root / "cues.json").write_text(json.dumps(dataclasses.asdict(sheet), indent=2))
             p.update(status="ready")
 

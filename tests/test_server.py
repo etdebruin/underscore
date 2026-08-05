@@ -98,9 +98,23 @@ def test_cue_roundtrip(tmp_path):
     resp = client.put(f"/api/projects/{pid}/cues", json=cues)
     assert resp.status_code == 200
 
+    # speech spans (0.1-1.0) in a 2.0s track leave a trailing gap centered at
+    # 1.5 - saved insert points snap into the silence and are echoed back
+    assert resp.json()["cues"]["inserts"][0]["time"] == 1.5
     fresh = client.get(f"/api/projects/{pid}").json()["cues"]
     assert fresh["inserts"][0]["mood"] == "tense"
-    assert fresh["inserts"][0]["time"] == 1.4
+    assert fresh["inserts"][0]["time"] == 1.5
+
+
+def test_analysis_inserts_snap_into_silence(tmp_path):
+    client = _client(tmp_path)
+    pid = client.post(
+        "/api/projects", files={"file": ("e.wav", _wav_bytes(), "audio/wav")}
+    ).json()["id"]
+    # fake analyzer proposes time=1.0, the onset of nothing: nearest silence
+    # center is 1.5 (gap from end-of-speech 1.0 to duration 2.0)
+    cues = client.get(f"/api/projects/{pid}").json()["cues"]
+    assert cues["inserts"][0]["time"] == 1.5
 
 
 def test_render_produces_output(tmp_path):
