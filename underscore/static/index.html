@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>underscore</title>
+<style>
+  :root {
+    --bg: oklch(0.21 0.01 60);
+    --panel: oklch(0.245 0.012 60);
+    --panel-2: oklch(0.27 0.014 60);
+    --line: oklch(0.32 0.015 60);
+    --text: oklch(0.92 0.008 80);
+    --muted: oklch(0.62 0.012 70);
+    --accent: oklch(0.78 0.13 70);
+    --accent-dim: oklch(0.78 0.13 70 / 0.25);
+    --wave: oklch(0.55 0.02 70);
+    --warm: oklch(0.75 0.12 65);
+    --tense: oklch(0.62 0.15 25);
+    --wistful: oklch(0.68 0.09 300);
+    --uplifting: oklch(0.70 0.11 160);
+    --mysterious: oklch(0.65 0.08 250);
+    font-size: 15px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    height: 100vh; display: flex; flex-direction: column; overflow: hidden;
+  }
+  button, select, input {
+    font: inherit; color: inherit; background: var(--panel-2);
+    border: 1px solid var(--line); border-radius: 6px; padding: 5px 10px;
+  }
+  button { cursor: pointer; transition: border-color 150ms ease-out, background 150ms ease-out; }
+  button:hover { border-color: var(--accent); }
+  button:disabled { opacity: 0.45; cursor: default; }
+  button.primary { background: var(--accent); color: oklch(0.2 0.02 60); border-color: transparent; font-weight: 600; }
+  button.primary:hover { background: oklch(0.83 0.13 70); }
+
+  header {
+    display: flex; align-items: center; gap: 14px; padding: 10px 16px;
+    border-bottom: 1px solid var(--line); background: var(--panel);
+  }
+  .wordmark { font-weight: 700; letter-spacing: 0.02em; }
+  .wordmark::before { content: "_"; color: var(--accent); font-weight: 800; }
+  #status { color: var(--muted); font-size: 0.86rem; min-width: 120px; }
+  #status.busy::after { content: "…"; animation: pulse 1.2s infinite; }
+  @keyframes pulse { 50% { opacity: 0.3; } }
+  header .spacer { flex: 1; }
+  header label { font-size: 0.86rem; color: var(--muted); display: flex; gap: 5px; align-items: center; }
+
+  main { flex: 1; display: flex; min-height: 0; }
+  aside {
+    width: 250px; border-right: 1px solid var(--line); background: var(--panel);
+    display: flex; flex-direction: column; overflow-y: auto; flex-shrink: 0;
+  }
+  aside h2 {
+    font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.1em;
+    color: var(--muted); margin: 14px 14px 6px; font-weight: 600;
+  }
+  .side-item {
+    padding: 7px 14px; cursor: pointer; font-size: 0.9rem;
+    display: flex; gap: 8px; align-items: center; border-left: 2px solid transparent;
+  }
+  .side-item:hover { background: var(--panel-2); }
+  .side-item.active { background: var(--panel-2); border-left-color: transparent; }
+  .side-item.active .name { color: var(--accent); }
+  .side-item .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .side-item .sub { color: var(--muted); font-size: 0.78rem; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .clip-play { background: none; border: none; padding: 2px 4px; color: var(--muted); }
+  .clip-play:hover { color: var(--accent); }
+  #dropzone {
+    margin: 8px 14px; padding: 14px; border: 1px dashed var(--line); border-radius: 8px;
+    text-align: center; color: var(--muted); font-size: 0.85rem; cursor: pointer;
+    transition: border-color 150ms ease-out;
+  }
+  #dropzone:hover, #dropzone.over { border-color: var(--accent); color: var(--text); }
+
+  #workspace { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  #empty {
+    flex: 1; display: flex; align-items: center; justify-content: center;
+    color: var(--muted); flex-direction: column; gap: 8px;
+  }
+  #empty .big { font-size: 1.2rem; color: var(--text); }
+
+  #transport {
+    display: flex; align-items: center; gap: 12px; padding: 8px 16px;
+    border-bottom: 1px solid var(--line);
+  }
+  #time { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 0.9rem; min-width: 130px; }
+  #zoom { width: 120px; accent-color: var(--accent); padding: 0; border: none; background: none; }
+
+  #timeline { flex: 1; overflow: auto; position: relative; }
+  #lanes { position: relative; min-width: 100%; }
+  .lane-label {
+    position: sticky; left: 0; font-size: 0.7rem; text-transform: uppercase;
+    letter-spacing: 0.1em; color: var(--muted); padding: 6px 10px 2px; z-index: 3;
+  }
+  #ruler { height: 22px; position: relative; border-bottom: 1px solid var(--line); cursor: pointer; }
+  .tick { position: absolute; top: 0; height: 100%; border-left: 1px solid var(--line); color: var(--muted); font-size: 0.68rem; padding: 3px 0 0 4px; user-select: none; }
+  #voicelane { height: 130px; position: relative; }
+  #wave { position: absolute; inset: 0; }
+  .lane { position: relative; border-top: 1px solid var(--line); }
+  #stinglane { height: 56px; }
+  #bedlane { height: 56px; }
+  .block {
+    position: absolute; top: 7px; bottom: 7px; border-radius: 6px;
+    color: oklch(0.16 0.02 60); font-size: 0.75rem; font-weight: 600;
+    padding: 3px 7px; overflow: hidden; white-space: nowrap; cursor: grab;
+    border: 1px solid oklch(1 0 0 / 0.25); user-select: none; min-width: 10px;
+  }
+  .block.pending { opacity: 0.65; border-style: dashed; }
+  .block.selected { outline: 2px solid var(--text); outline-offset: 1px; }
+  .block .grip { position: absolute; top: 0; bottom: 0; width: 7px; cursor: ew-resize; }
+  .block .grip.l { left: 0; } .block .grip.r { right: 0; }
+  #playhead {
+    position: absolute; top: 0; bottom: 0; width: 1px; background: var(--accent);
+    pointer-events: none; z-index: 4; box-shadow: 0 0 6px var(--accent-dim);
+  }
+
+  #inspector {
+    border-top: 1px solid var(--line); background: var(--panel);
+    padding: 10px 16px; display: flex; gap: 14px; align-items: center; min-height: 58px;
+    font-size: 0.9rem; flex-wrap: wrap;
+  }
+  #inspector .hint { color: var(--muted); }
+  #inspector input[type=number] { width: 84px; }
+  #inspector input[type=text] { flex: 1; min-width: 240px; }
+  #inspector .danger:hover { border-color: var(--tense); color: var(--tense); }
+</style>
+</head>
+<body>
+<header>
+  <span class="wordmark">underscore</span>
+  <span id="status"></span>
+  <span class="spacer"></span>
+  <label>scoring
+    <select id="scoring">
+      <option>light</option><option selected>standard</option><option>rich</option>
+    </select>
+  </label>
+  <button id="reanalyze" disabled>Re-analyze</button>
+  <label><input type="checkbox" id="fx-warm" checked> warm</label>
+  <label><input type="checkbox" id="fx-level" checked> level</label>
+  <button id="render" class="primary" disabled>Render</button>
+  <a id="download" style="display:none"><button>Download MP3</button></a>
+</header>
+<main>
+  <aside>
+    <h2>Episodes</h2>
+    <div id="dropzone">Drop a voice track<br>or click to choose</div>
+    <input type="file" id="filepick" accept="audio/*,video/*" hidden>
+    <div id="projects"></div>
+    <h2>Music library</h2>
+    <div id="library"></div>
+  </aside>
+  <div id="workspace">
+    <div id="empty">
+      <div class="big">Add a voice track to begin</div>
+      <div>Whisper transcribes it, Claude drafts the cue sheet, you fine-tune it here.</div>
+    </div>
+    <div id="editor" style="display:none; flex:1; flex-direction:column; min-height:0;">
+      <div id="transport">
+        <button id="play">Play</button>
+        <span id="time">0:00.0 / 0:00.0</span>
+        <input type="range" id="zoom" min="4" max="60" value="8" title="zoom">
+        <span class="hint" style="color:var(--muted); font-size:0.8rem;">drag blocks to retime, drag bed edges to resize, click a block to edit</span>
+      </div>
+      <div id="timeline">
+        <div id="lanes">
+          <div id="ruler"></div>
+          <div class="lane-label">Voice</div>
+          <div id="voicelane"><canvas id="wave"></canvas></div>
+          <div class="lane-label">Stings</div>
+          <div id="stinglane" class="lane"></div>
+          <div class="lane-label">Beds</div>
+          <div id="bedlane" class="lane"></div>
+          <div id="playhead" style="left:0"></div>
+        </div>
+      </div>
+      <div id="inspector"><span class="hint">Select a block to edit its cue.</span></div>
+    </div>
+  </div>
+</main>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const MOODS = ["warm", "tense", "wistful", "uplifting", "mysterious"];
+const moodColor = (m) => getComputedStyle(document.documentElement).getPropertyValue(`--${MOODS.includes(m) ? m : "warm"}`);
+const PRE = 0.8, POST = 1.4;
+
+let project = null;      // {id, name, status, duration, cues, has_scored}
+let peaks = null;
+let pxPerSec = 8;
+let selected = null;     // {kind, index}
+let audio = { ctx: null, voiceBuf: null, clipBufs: {}, playing: false, nodes: [], startedAt: 0, offset: 0 };
+let saveTimer = null;
+
+// ---------- helpers ----------
+const fmt = (s) => `${Math.floor(s / 60)}:${(s % 60).toFixed(1).padStart(4, "0")}`;
+const inserts = () => project?.cues?.inserts ?? [];
+const underlays = () => project?.cues?.underlays ?? [];
+const shift = (t) => t + inserts().reduce((acc, i) => acc + (i.time < t ? i.duration : 0), 0);
+const outDuration = () => (project?.duration ?? 0) + inserts().reduce((a, i) => a + i.duration, 0);
+// inverse of shift(): output time -> original time (null inside an insert gap)
+function unshift(T) {
+  let acc = 0;
+  for (const i of [...inserts()].sort((a, b) => a.time - b.time)) {
+    const gapStart = i.time + acc;
+    if (T < gapStart) return T - acc;
+    if (T < gapStart + i.duration) return null;
+    acc += i.duration;
+  }
+  return T - acc;
+}
+
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  if (!r.ok) throw new Error(await r.text());
+  const ct = r.headers.get("content-type") || "";
+  return ct.includes("json") ? r.json() : r;
+}
+
+// ---------- sidebar ----------
+async function refreshProjects() {
+  const list = await api("/api/projects");
+  $("projects").innerHTML = "";
+  for (const p of list.reverse()) {
+    const el = document.createElement("div");
+    el.className = "side-item" + (project?.id === p.id ? " active" : "");
+    el.innerHTML = `<span class="name">${p.name}</span><span class="sub">${p.status}</span>`;
+    el.onclick = () => openProject(p.id);
+    $("projects").appendChild(el);
+  }
+}
+
+async function refreshLibrary() {
+  const clips = await api("/api/library");
+  $("library").innerHTML = "";
+  for (const c of clips.reverse()) {
+    const el = document.createElement("div");
+    el.className = "side-item";
+    el.title = c.description;
+    el.innerHTML = `<span class="dot" style="background:${moodColor(c.mood)}"></span>
+      <span class="name">${c.description || c.mood}</span>
+      <span class="sub">${Math.round(c.length_ms / 1000)}s</span>
+      <button class="clip-play" title="audition">&#9658;</button>`;
+    el.querySelector(".clip-play").onclick = (e) => {
+      e.stopPropagation();
+      new Audio(`/api/library/${c.clip_id}/audio`).play();
+    };
+    $("library").appendChild(el);
+  }
+}
+
+// ---------- upload ----------
+$("dropzone").onclick = () => $("filepick").click();
+$("filepick").onchange = () => upload($("filepick").files[0]);
+$("dropzone").ondragover = (e) => { e.preventDefault(); $("dropzone").classList.add("over"); };
+$("dropzone").ondragleave = () => $("dropzone").classList.remove("over");
+$("dropzone").ondrop = (e) => {
+  e.preventDefault(); $("dropzone").classList.remove("over");
+  if (e.dataTransfer.files[0]) upload(e.dataTransfer.files[0]);
+};
+async function upload(file) {
+  const form = new FormData();
+  form.append("file", file);
+  const { id } = await api(`/api/projects?scoring=${$("scoring").value}`, { method: "POST", body: form });
+  await openProject(id);
+}
+
+// ---------- project lifecycle ----------
+async function openProject(id) {
+  stopPlayback();
+  project = await api(`/api/projects/${id}`);
+  project.id = id;
+  peaks = null; selected = null;
+  audio.voiceBuf = null; audio.clipBufs = {};
+  $("empty").style.display = "none";
+  $("editor").style.display = "flex";
+  refreshProjects();
+  setStatus();
+  if (project.status === "ready") await loadAssets();
+  else pollUntilReady();
+  layout();
+}
+
+function setStatus() {
+  const busy = ["transcribing", "analyzing", "rendering"].includes(project?.status);
+  $("status").textContent = project ? `${project.name}: ${project.status}${project.error ? " - " + project.error : ""}` : "";
+  $("status").classList.toggle("busy", busy);
+  $("render").disabled = busy || !project?.cues;
+  $("reanalyze").disabled = busy || !project;
+  $("download").style.display = project?.has_scored && !busy ? "" : "none";
+  if (project?.has_scored) {
+    $("download").href = `/api/projects/${project.id}/audio/scored`;
+    $("download").download = (project.name || "scored").replace(/\.[^.]+$/, "") + "_scored.mp3";
+  }
+}
+
+async function pollUntilReady() {
+  const id = project.id;
+  while (project?.id === id && ["transcribing", "analyzing", "rendering"].includes(project.status)) {
+    await new Promise((r) => setTimeout(r, 1500));
+    if (project?.id !== id) return;
+    const fresh = await api(`/api/projects/${id}`);
+    project = { ...fresh, id };
+    setStatus(); layout();
+  }
+  if (project?.id === id && project.status === "ready") { await loadAssets(); layout(); }
+  refreshProjects(); refreshLibrary();
+}
+
+async function loadAssets() {
+  if (!peaks) { try { peaks = await api(`/api/projects/${project.id}/peaks`); } catch {} }
+  if (!audio.ctx) audio.ctx = new AudioContext();
+  if (!audio.voiceBuf) {
+    const resp = await fetch(`/api/projects/${project.id}/audio/voice`);
+    audio.voiceBuf = await audio.ctx.decodeAudioData(await resp.arrayBuffer());
+  }
+  loadClipBuffers();
+}
+
+async function loadClipBuffers() {
+  const jobs = [];
+  const grab = (kind, idx) => jobs.push((async () => {
+    const key = `${kind}:${idx}`;
+    try {
+      const resp = await fetch(`/api/projects/${project.id}/cue-audio/${kind}/${idx}`);
+      if (!resp.ok) { audio.clipBufs[key] = null; return; }
+      audio.clipBufs[key] = await audio.ctx.decodeAudioData(await resp.arrayBuffer());
+    } catch { audio.clipBufs[key] = null; }
+  })());
+  inserts().forEach((_, i) => grab("insert", i));
+  underlays().forEach((_, i) => grab("underlay", i));
+  await Promise.all(jobs);
+  layout();
+}
+
+// ---------- layout / drawing ----------
+function layout() {
+  if (!project?.cues) { $("stinglane").innerHTML = ""; $("bedlane").innerHTML = ""; drawWave(); drawRuler(); return; }
+  const width = Math.max(outDuration() * pxPerSec, $("timeline").clientWidth);
+  $("lanes").style.width = width + "px";
+  drawRuler(); drawWave();
+  renderBlocks("insert", $("stinglane"), inserts(), (i) => ({
+    x: shift(i.time) * pxPerSec, w: Math.max(i.duration * pxPerSec, 10), label: i.mood,
+  }));
+  renderBlocks("underlay", $("bedlane"), underlays(), (u) => ({
+    x: shift(u.start) * pxPerSec, w: Math.max((shift(u.end) - shift(u.start)) * pxPerSec, 10), label: u.mood,
+  }));
+}
+
+function renderBlocks(kind, lane, cues, geom) {
+  lane.innerHTML = "";
+  cues.forEach((cue, index) => {
+    const { x, w, label } = geom(cue);
+    const el = document.createElement("div");
+    el.className = "block";
+    if (audio.clipBufs[`${kind}:${index}`] === null) el.classList.add("pending");
+    if (selected && selected.kind === kind && selected.index === index) el.classList.add("selected");
+    el.style.left = x + "px"; el.style.width = w + "px";
+    el.style.background = moodColor(cue.mood);
+    el.textContent = label;
+    el.title = cue.reason || "";
+    if (kind === "underlay") el.innerHTML += '<div class="grip l"></div><div class="grip r"></div>';
+    attachDrag(el, kind, index);
+    el.onclick = (e) => { e.stopPropagation(); select(kind, index); };
+    lane.appendChild(el);
+  });
+}
+
+function drawRuler() {
+  const ruler = $("ruler");
+  ruler.innerHTML = "";
+  const total = outDuration();
+  const step = pxPerSec > 30 ? 5 : pxPerSec > 12 ? 15 : pxPerSec > 6 ? 30 : 60;
+  for (let s = 0; s <= total; s += step) {
+    const tick = document.createElement("div");
+    tick.className = "tick";
+    tick.style.left = s * pxPerSec + "px";
+    tick.textContent = fmt(s);
+    ruler.appendChild(tick);
+  }
+}
+
+function drawWave() {
+  const canvas = $("wave");
+  const laneW = parseFloat($("lanes").style.width) || $("timeline").clientWidth;
+  const h = $("voicelane").clientHeight;
+  canvas.width = laneW * devicePixelRatio; canvas.height = h * devicePixelRatio;
+  canvas.style.width = laneW + "px"; canvas.style.height = h + "px";
+  const ctx = canvas.getContext("2d");
+  ctx.scale(devicePixelRatio, devicePixelRatio);
+  ctx.clearRect(0, 0, laneW, h);
+  if (!peaks || !project?.duration) return;
+  ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--wave");
+  const mid = h / 2, secPerBucket = project.duration / peaks.length;
+  for (let x = 0; x < laneW; x++) {
+    const t = unshift(x / pxPerSec);
+    if (t === null || t >= project.duration) continue;   // gap where a sting sits
+    const b = peaks[Math.min(Math.floor(t / secPerBucket), peaks.length - 1)];
+    const y1 = mid + b[0] * mid * 0.92, y2 = mid + b[1] * mid * 0.92;
+    ctx.fillRect(x, Math.min(y1, y2), 1, Math.max(1, Math.abs(y2 - y1)));
+  }
+}
+
+// ---------- selection & inspector ----------
+function select(kind, index) {
+  selected = { kind, index };
+  layout(); renderInspector();
+}
+
+function renderInspector() {
+  const box = $("inspector");
+  if (!selected) { box.innerHTML = '<span class="hint">Select a block to edit its cue.</span>'; return; }
+  const cue = (selected.kind === "insert" ? inserts() : underlays())[selected.index];
+  if (!cue) { selected = null; return renderInspector(); }
+  const moodOpts = MOODS.map((m) => `<option ${m === cue.mood ? "selected" : ""}>${m}</option>`).join("");
+  const fields = selected.kind === "insert"
+    ? `<label>at <input type="number" step="0.1" id="f-time" value="${cue.time.toFixed(1)}">s</label>
+       <label>length <input type="number" step="0.5" min="2" max="12" id="f-dur" value="${cue.duration.toFixed(1)}">s</label>`
+    : `<label>from <input type="number" step="0.1" id="f-start" value="${cue.start.toFixed(1)}">s</label>
+       <label>to <input type="number" step="0.1" id="f-end" value="${cue.end.toFixed(1)}">s</label>`;
+  box.innerHTML = `
+    <span class="dot" style="background:${moodColor(cue.mood)}"></span>
+    <strong>${selected.kind}</strong>
+    <label>mood <select id="f-mood">${moodOpts}</select></label>
+    ${fields}
+    <input type="text" id="f-reason" value="${(cue.reason || "").replace(/"/g, "&quot;")}" placeholder="scene description (drives the music prompt)">
+    <button class="danger" id="f-delete">Delete</button>`;
+  const upd = (fn) => (e) => { fn(e); afterCueEdit(); };
+  $("f-mood").onchange = upd((e) => (cue.mood = e.target.value));
+  $("f-reason").onchange = upd((e) => (cue.reason = e.target.value));
+  if (selected.kind === "insert") {
+    $("f-time").onchange = upd((e) => (cue.time = +e.target.value));
+    $("f-dur").onchange = upd((e) => (cue.duration = Math.min(Math.max(+e.target.value, 2), 12)));
+  } else {
+    $("f-start").onchange = upd((e) => (cue.start = +e.target.value));
+    $("f-end").onchange = upd((e) => (cue.end = +e.target.value));
+  }
+  $("f-delete").onclick = () => {
+    (selected.kind === "insert" ? inserts() : underlays()).splice(selected.index, 1);
+    selected = null; afterCueEdit(); renderInspector();
+  };
+}
+
+function afterCueEdit() {
+  stopPlayback(); layout(); scheduleSave(); loadClipBuffers();
+}
+
+function scheduleSave() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(async () => {
+    await api(`/api/projects/${project.id}/cues`, {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(project.cues),
+    });
+  }, 500);
+}
+
+// ---------- dragging ----------
+function attachDrag(el, kind, index) {
+  el.onpointerdown = (e) => {
+    if (e.target.classList.contains("grip")) return dragGrip(e, el, index);
+    const cue = (kind === "insert" ? inserts() : underlays())[index];
+    const startX = e.clientX;
+    const orig = kind === "insert" ? cue.time : cue.start;
+    const len = kind === "underlay" ? cue.end - cue.start : 0;
+    el.setPointerCapture(e.pointerId);
+    let moved = false;
+    el.onpointermove = (ev) => {
+      const dt = (ev.clientX - startX) / pxPerSec;
+      if (Math.abs(dt) > 0.05) moved = true;
+      if (kind === "insert") cue.time = Math.max(0, Math.min(orig + dt, project.duration));
+      else { cue.start = Math.max(0, orig + dt); cue.end = cue.start + len; }
+      layout(); if (selected) renderInspector();
+    };
+    el.onpointerup = () => {
+      el.onpointermove = el.onpointerup = null;
+      if (moved) afterCueEdit();
+    };
+  };
+}
+
+function dragGrip(e, el, index) {
+  e.stopPropagation();
+  const cue = underlays()[index];
+  const left = e.target.classList.contains("l");
+  const startX = e.clientX, s0 = cue.start, e0 = cue.end;
+  e.target.setPointerCapture(e.pointerId);
+  e.target.onpointermove = (ev) => {
+    const dt = (ev.clientX - startX) / pxPerSec;
+    if (left) cue.start = Math.max(0, Math.min(s0 + dt, cue.end - 5));
+    else cue.end = Math.min(Math.max(e0 + dt, cue.start + 5), project.duration);
+    layout(); if (selected) renderInspector();
+  };
+  e.target.onpointerup = (ev) => { ev.target.onpointermove = ev.target.onpointerup = null; afterCueEdit(); };
+}
+
+// ---------- playback preview (Web Audio approximation of the mix) ----------
+function stopPlayback() {
+  audio.nodes.forEach((n) => { try { n.stop(); } catch {} });
+  audio.nodes = []; audio.playing = false;
+  $("play").textContent = "Play";
+}
+
+function startPlayback(fromOut) {
+  if (!audio.voiceBuf) return;
+  stopPlayback();
+  const ctx = audio.ctx, t0 = ctx.currentTime + 0.05;
+  audio.startedAt = t0; audio.offset = fromOut;
+  // voice: one source per segment between insert gaps
+  const ins = [...inserts()].sort((a, b) => a.time - b.time);
+  let cursor = 0;
+  const segments = [];
+  for (const i of ins) { segments.push([cursor, i.time]); cursor = i.time; }
+  segments.push([cursor, project.duration]);
+  for (const [s, e] of segments) {
+    const outStart = shift(s + 1e-6);
+    const outEnd = outStart + (e - s);
+    if (outEnd <= fromOut || e <= s) continue;
+    const skip = Math.max(fromOut - outStart, 0);
+    const src = ctx.createBufferSource();
+    src.buffer = audio.voiceBuf;
+    src.connect(ctx.destination);
+    src.start(t0 + Math.max(outStart - fromOut, 0), s + skip, e - s - skip);
+    audio.nodes.push(src);
+  }
+  // music clips (constant approximate gains; the render does the real ducking)
+  const place = (key, outStart, dur, gain) => {
+    const buf = audio.clipBufs[key];
+    if (!buf || outStart + dur <= fromOut) return;
+    const skip = Math.max(fromOut - outStart, 0);
+    const src = ctx.createBufferSource(); src.buffer = buf;
+    const g = ctx.createGain();
+    const at = t0 + Math.max(outStart - fromOut, 0);
+    g.gain.setValueAtTime(0, at);
+    g.gain.linearRampToValueAtTime(gain, at + 0.7);
+    g.gain.setValueAtTime(gain, at + Math.max(dur - skip - 1.2, 0.7));
+    g.gain.linearRampToValueAtTime(0, at + Math.max(dur - skip, 1));
+    src.connect(g); g.connect(ctx.destination);
+    src.start(at, skip, dur - skip);
+    audio.nodes.push(src);
+  };
+  inserts().forEach((i, idx) => place(`insert:${idx}`, shift(i.time) - PRE, PRE + i.duration + POST, 0.85));
+  underlays().forEach((u, idx) => place(`underlay:${idx}`, shift(u.start), shift(u.end) - shift(u.start), 0.22));
+  audio.playing = true;
+  $("play").textContent = "Pause";
+  tickPlayhead();
+}
+
+function tickPlayhead() {
+  if (!audio.playing) return;
+  const pos = audio.offset + (audio.ctx.currentTime - audio.startedAt);
+  if (pos >= outDuration()) { stopPlayback(); return; }
+  $("playhead").style.left = pos * pxPerSec + "px";
+  $("time").textContent = `${fmt(pos)} / ${fmt(outDuration())}`;
+  requestAnimationFrame(tickPlayhead);
+}
+
+$("play").onclick = async () => {
+  if (audio.playing) { audio.offset += audio.ctx.currentTime - audio.startedAt; stopPlayback(); }
+  else { await loadAssets(); await audio.ctx.resume(); startPlayback(audio.offset || 0); }
+};
+$("ruler").onclick = (e) => {
+  const x = e.clientX - $("lanes").getBoundingClientRect().left;
+  audio.offset = x / pxPerSec;
+  $("playhead").style.left = x + "px";
+  $("time").textContent = `${fmt(audio.offset)} / ${fmt(outDuration())}`;
+  if (audio.playing) startPlayback(audio.offset);
+};
+document.body.onkeydown = (e) => {
+  if (e.code === "Space" && project && e.target.tagName !== "INPUT" && e.target.tagName !== "SELECT") {
+    e.preventDefault(); $("play").click();
+  }
+};
+
+// ---------- header actions ----------
+$("zoom").oninput = () => { pxPerSec = +$("zoom").value; layout(); };
+$("reanalyze").onclick = async () => {
+  await api(`/api/projects/${project.id}/analyze`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ scoring: $("scoring").value }),
+  });
+  project.status = "analyzing"; setStatus(); pollUntilReady();
+};
+$("render").onclick = async () => {
+  await api(`/api/projects/${project.id}/render`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ warm: $("fx-warm").checked, level: $("fx-level").checked }),
+  });
+  project.status = "rendering"; setStatus(); pollUntilReady();
+};
+
+window.onresize = layout;
+refreshProjects(); refreshLibrary();
+</script>
+</body>
+</html>
