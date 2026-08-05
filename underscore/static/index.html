@@ -114,6 +114,7 @@
   }
   .block.pending { opacity: 0.65; border-style: dashed; }
   .block.selected { outline: 2px solid var(--text); outline-offset: 1px; }
+  .block.auditioning { animation: pulse 1.2s infinite; }
   .block .grip { position: absolute; top: 0; bottom: 0; width: 7px; cursor: ew-resize; }
   .block .grip.l { left: 0; } .block .grip.r { right: 0; }
   #playhead {
@@ -347,7 +348,7 @@ const audition = { el: new Audio(), key: null, btn: null };
 audition.el.onended = () => stopAudition();
 function playAudition(url, key, btn) {
   if (audition.key === key) return stopAudition();
-  stopAudition(); stopPlayback();
+  stopAudition(); stopPlayback(); stopCuePreview();
   audition.el.src = url;
   audition.el.play();
   audition.key = key; audition.btn = btn;
@@ -482,6 +483,7 @@ function renderBlocks(kind, lane, cues, geom) {
     const entry = audio.clipBufs[`${kind}:${index}`];
     if (!entry || entry.source !== "library") el.classList.add("pending");
     if (selected && selected.kind === kind && selected.index === index) el.classList.add("selected");
+    if (cuePreview.key === `${kind}:${index}`) el.classList.add("auditioning");
     el.style.left = x + "px"; el.style.width = w + "px";
     el.style.background = moodColor(cue.mood);
     el.textContent = label;
@@ -570,6 +572,34 @@ function fillWavePath(ctx, top, bot, w, mid, colorVar) {
   }
 }
 
+// ---------- cue clip audition (Space with a block selected) ----------
+let cuePreview = { node: null, key: null };
+function stopCuePreview() {
+  if (cuePreview.node) { try { cuePreview.node.stop(); } catch {} }
+  cuePreview = { node: null, key: null };
+  layout();
+}
+async function toggleCuePreview() {
+  const key = `${selected.kind}:${selected.index}`;
+  if (cuePreview.key === key) return stopCuePreview();
+  stopCuePreview(); stopAudition();
+  if (audio.playing) { audio.offset += audio.ctx.currentTime - audio.startedAt; stopPlayback(); }
+  if (!audio.ctx) audio.ctx = new AudioContext();
+  await audio.ctx.resume();
+  if (!audio.clipBufs[key]) await loadAssets();
+  const entry = audio.clipBufs[key];
+  if (!entry) return;
+  const src = audio.ctx.createBufferSource();
+  src.buffer = entry.buf;
+  const g = audio.ctx.createGain();
+  g.gain.value = 0.9;
+  src.connect(g); g.connect(audio.ctx.destination);
+  src.onended = () => { if (cuePreview.node === src) stopCuePreview(); };
+  cuePreview = { node: src, key };
+  src.start();
+  layout();
+}
+
 // ---------- selection & inspector ----------
 function select(kind, index) {
   selected = { kind, index };
@@ -590,6 +620,7 @@ function renderInspector() {
   box.innerHTML = `
     <span class="dot" style="background:${moodColor(cue.mood)}"></span>
     <strong>${selected.kind}</strong>
+    <span class="hint">Space plays this clip &middot; Esc deselects</span>
     <label>mood <select id="f-mood">${moodOpts}</select></label>
     ${fields}
     <input type="text" id="f-reason" value="${(cue.reason || "").replace(/"/g, "&quot;")}" placeholder="scene description (drives the music prompt)">
@@ -755,7 +786,7 @@ function tickPlayhead() {
 }
 
 $("play").onclick = async () => {
-  stopAudition();
+  stopAudition(); stopCuePreview();
   if (audio.playing) {
     audio.offset += audio.ctx.currentTime - audio.startedAt;
     stopPlayback();
@@ -788,7 +819,13 @@ $("bedlane").onclick = seekAt;
 document.body.onkeydown = (e) => {
   const typing = e.target.tagName === "INPUT" || e.target.tagName === "SELECT";
   if (e.code === "Space" && project && !typing) {
-    e.preventDefault(); $("play").click();
+    e.preventDefault();
+    if (selected) toggleCuePreview();   // audition just the selected clip, in place
+    else $("play").click();
+  }
+  if (e.code === "Escape" && selected) {
+    stopCuePreview();
+    selected = null; layout(); renderInspector();
   }
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z" && !typing) {
     e.preventDefault();
