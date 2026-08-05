@@ -18,21 +18,40 @@ MIN_LENGTH_MS = 3000
 MAX_LENGTH_MS = 600_000
 TARGET_PEAK = 0.7
 
+# House style: modern public-radio news podcast ("The Daily"-adjacent) — minimal,
+# rhythmic, motif-driven chamber instrumentation rather than washy pads.
 _STYLE = {
-    "warm": "warm and gentle, soft felt piano and strings, calm and unhurried",
-    "tense": "tense and suspenseful, low pulsing synths and sparse percussion, restrained",
-    "wistful": "wistful and bittersweet, slow piano with airy pads, melancholy but tender",
-    "uplifting": "uplifting and hopeful, bright acoustic guitar and light rhythm, building gently",
-    "mysterious": "mysterious and atmospheric, ambient drones and distant bells, spacious",
+    "warm": (
+        "warm and inviting: a simple repeating felt-piano motif over soft pizzicato "
+        "strings, gentle and steady"
+    ),
+    "tense": (
+        "tense and coiled: staccato pizzicato cello ostinato, muted piano stabs, a dry "
+        "ticking pulse, urgent but quiet"
+    ),
+    "wistful": (
+        "wistful and reflective: sparse felt piano with long cello notes underneath, "
+        "slow and intimate, a little melancholy"
+    ),
+    "uplifting": (
+        "bright and forward-moving: plucked strings and marimba in a light interlocking "
+        "pattern, optimistic momentum without being cheerful"
+    ),
+    "mysterious": (
+        "curious and searching: soft marimba and muted piano over a low sustained drone, "
+        "spacious, quietly propulsive"
+    ),
 }
 
 
 def build_prompt(mood: str, reason: str) -> str:
     style = _STYLE.get(mood, _STYLE["warm"])
     prompt = (
-        f"Instrumental background music bed for a narrated podcast: {style}. "
-        "Understated underscore that sits beneath a speaking voice - no vocals, "
-        "no melody that fights for attention, consistent energy throughout."
+        "Instrumental underscore for a serious public-radio news podcast, in the style "
+        f"of a modern narrative journalism show: {style}. Minimal chamber ensemble "
+        "(piano, pizzicato strings, marimba, subtle percussion), a short repeating motif "
+        "with a restrained rhythmic pulse. It must sit beneath a speaking voice: no "
+        "vocals, no drums kit, no big builds, consistent energy throughout."
     )
     if reason:
         prompt += f" Scene context: {reason}"

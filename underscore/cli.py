@@ -12,28 +12,15 @@ import sys
 import tempfile
 from pathlib import Path
 
-import numpy as np
 import soundfile as sf
 
 from .analyze import analyze
 from .cues import CueSheet, Insert, Underlay
 from .mix import assemble
 from .transcribe import transcribe
+from .voicefx import process_voice
 
 SR = 44100
-
-
-def _load_mono(path: str) -> np.ndarray:
-    """Decode any audio file to 44.1kHz mono float32 via ffmpeg."""
-    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-        subprocess.run(
-            ["ffmpeg", "-y", "-loglevel", "error", "-i", path,
-             "-ac", "1", "-ar", str(SR), tmp.name],
-            check=True,
-        )
-        data, _ = sf.read(tmp.name, dtype="float32")
-    Path(tmp.name).unlink(missing_ok=True)
-    return data
 
 
 def _loudnorm(in_path: str, out_path: str) -> None:
@@ -69,6 +56,20 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Music backend (default: elevenlabs when ELEVENLABS_API_KEY is set, else synth)",
     )
+    parser.add_argument(
+        "--scoring",
+        choices=["light", "standard", "rich"],
+        default="standard",
+        help="How densely to score: stings at theme transitions scale with this",
+    )
+    parser.add_argument(
+        "--level", action=argparse.BooleanOptionalAction, default=True,
+        help="Even out the speaker's volume (compressor + dynamic normalizer)",
+    )
+    parser.add_argument(
+        "--warm", action=argparse.BooleanOptionalAction, default=True,
+        help="Warm up the voice (EQ: rumble cut, low-mid boost, de-ess)",
+    )
     args = parser.parse_args(argv)
 
     print(f"[1/4] Transcribing {args.input} ...", flush=True)
@@ -83,8 +84,8 @@ def main(argv: list[str] | None = None) -> int:
             underlays=[Underlay(**u) for u in raw["underlays"]],
         )
     else:
-        print("[2/4] Asking Claude for a cue sheet ...", flush=True)
-        sheet = analyze(transcript)
+        print(f"[2/4] Asking Claude for a cue sheet ({args.scoring} scoring) ...", flush=True)
+        sheet = analyze(transcript, scoring=args.scoring)
 
     sheet_json = json.dumps(dataclasses.asdict(sheet), indent=2)
     for ins in sheet.inserts:
@@ -102,8 +103,9 @@ def main(argv: list[str] | None = None) -> int:
         from .elevenlabs_music import ElevenLabsMusic
 
         bed_fn = ElevenLabsMusic().bed
-    print(f"[3/4] Mixing (music: {backend}) ...", flush=True)
-    voice = _load_mono(args.input)
+    fx = [name for name, on in (("warm", args.warm), ("level", args.level)) if on]
+    print(f"[3/4] Mixing (music: {backend}; voice fx: {', '.join(fx) or 'none'}) ...", flush=True)
+    voice = process_voice(args.input, SR, level=args.level, warm=args.warm)
     master = assemble(voice, SR, sheet, transcript.speech_spans(), bed_fn=bed_fn)
 
     print(f"[4/4] Loudness-normalizing -> {args.output}", flush=True)

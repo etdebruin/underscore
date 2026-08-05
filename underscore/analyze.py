@@ -7,21 +7,42 @@ from .transcribe import Transcript
 
 MODEL = "claude-opus-5"
 
-SYSTEM = """You are an experienced podcast producer scoring an episode with music.
-You receive a transcript with word-level timestamps. Propose a restrained cue sheet:
+SYSTEM = """You are an experienced podcast producer scoring an episode with music,
+in the style of a modern narrative news show. You receive a transcript with
+word-level timestamps. Propose a cue sheet:
 
 - "inserts": moments where the narration should PAUSE for a short musical sting
-  (3-8 seconds). Use these only at genuine act breaks, cliffhangers, or emotional
-  beats where a beat of silence-plus-music heightens the moment. The time you give
-  is where the pause opens, and it must land at a sentence boundary.
+  (3-8 seconds). These mark structure and heighten storytelling: use one whenever
+  the episode moves between distinct themes, segments, or chapters, and at genuine
+  act breaks, cliffhangers, reveals, or emotional beats where a breath of
+  silence-plus-music lands the moment. The time you give is where the pause opens,
+  and it must land at a sentence boundary.
 - "underlays": stretches where a quiet music bed should play UNDER the narration
-  (intro, outro, emotionally charged or scene-setting passages). At least 10 seconds
-  long, and they must not overlap each other or an insert.
+  (intro, outro, emotionally charged, scene-setting, or montage-like passages).
+  At least 10 seconds long, and they must not overlap each other or an insert.
 
 Moods available: warm, tense, wistful, uplifting, mysterious.
 
-Less is more: for a few minutes of audio, 1-3 inserts and 1-3 underlays. Never
-score wall-to-wall. Give a short reason for each cue."""
+Never score wall-to-wall; silence between cues is what makes them land.
+Give a short reason for each cue."""
+
+DENSITY = {
+    "light": (
+        "Be very sparing: roughly one insert per 10 minutes of audio and at most "
+        "2-3 underlays total, reserved for the strongest moments only."
+    ),
+    "standard": (
+        "Aim for roughly one insert per 4-6 minutes of audio at real theme "
+        "transitions, plus an intro bed, an outro bed, and 1-2 beds under the most "
+        "emotionally charged passages."
+    ),
+    "rich": (
+        "Score it like a heavily produced narrative episode: an insert at every "
+        "theme or segment transition (roughly one per 2-4 minutes), and beds under "
+        "the intro, outro, and each emotionally significant or scene-setting "
+        "passage. Still leave stretches of dry narration between cues."
+    ),
+}
 
 
 class InsertCue(BaseModel):
@@ -60,14 +81,14 @@ def _timed_transcript(transcript: Transcript) -> str:
     return "\n".join(lines)
 
 
-def analyze(transcript: Transcript, client=None) -> CueSheet:
+def analyze(transcript: Transcript, client=None, scoring: str = "standard") -> CueSheet:
     import anthropic
 
     client = client or anthropic.Anthropic()
     response = client.messages.parse(
         model=MODEL,
         max_tokens=4096,
-        system=SYSTEM,
+        system=f"{SYSTEM}\n\n{DENSITY.get(scoring, DENSITY['standard'])}",
         messages=[
             {
                 "role": "user",
