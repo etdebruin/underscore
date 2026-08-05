@@ -1,0 +1,95 @@
+"""CLI: voice track in, scored track out.
+
+    uv run python -m underscore.cli input.wav -o scored.wav [--cues cues.json]
+"""
+
+import argparse
+import dataclasses
+import json
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+import numpy as np
+import soundfile as sf
+
+from .analyze import analyze
+from .cues import CueSheet, Insert, Underlay
+from .mix import assemble
+from .transcribe import transcribe
+
+SR = 44100
+
+
+def _load_mono(path: str) -> np.ndarray:
+    """Decode any audio file to 44.1kHz mono float32 via ffmpeg."""
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+        subprocess.run(
+            ["ffmpeg", "-y", "-loglevel", "error", "-i", path,
+             "-ac", "1", "-ar", str(SR), tmp.name],
+            check=True,
+        )
+        data, _ = sf.read(tmp.name, dtype="float32")
+    Path(tmp.name).unlink(missing_ok=True)
+    return data
+
+
+def _loudnorm(in_path: str, out_path: str) -> None:
+    """Normalize to -16 LUFS (podcast standard); encodes by output extension."""
+    subprocess.run(
+        ["ffmpeg", "-y", "-loglevel", "error", "-i", in_path,
+         "-af", "loudnorm=I=-16:TP=-1.5:LRA=11", out_path],
+        check=True,
+    )
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Score a podcast voice track with music")
+    parser.add_argument("input", help="Voice track (any format ffmpeg reads)")
+    parser.add_argument("-o", "--output", required=True, help="Output file (.wav/.mp3/.m4a)")
+    parser.add_argument("--cues", help="Use/save cue sheet JSON instead of calling Claude")
+    parser.add_argument("--save-cues", help="Write the generated cue sheet to this JSON file")
+    args = parser.parse_args(argv)
+
+    print(f"[1/4] Transcribing {args.input} ...", flush=True)
+    transcript = transcribe(args.input)
+    print(f"      {len(transcript.words)} words, {transcript.duration:.1f}s", flush=True)
+
+    if args.cues and Path(args.cues).exists():
+        print(f"[2/4] Loading cue sheet from {args.cues}", flush=True)
+        raw = json.loads(Path(args.cues).read_text())
+        sheet = CueSheet(
+            inserts=[Insert(**i) for i in raw["inserts"]],
+            underlays=[Underlay(**u) for u in raw["underlays"]],
+        )
+    else:
+        print("[2/4] Asking Claude for a cue sheet ...", flush=True)
+        sheet = analyze(transcript)
+
+    sheet_json = json.dumps(dataclasses.asdict(sheet), indent=2)
+    for ins in sheet.inserts:
+        print(f"      insert   @{ins.time:6.1f}s  {ins.duration:.0f}s {ins.mood:<10} {ins.reason}")
+    for u in sheet.underlays:
+        print(f"      underlay {u.start:6.1f}-{u.end:.1f}s  {u.mood:<10} {u.reason}")
+    save_to = args.save_cues or args.cues
+    if save_to:
+        Path(save_to).write_text(sheet_json)
+        print(f"      cue sheet saved to {save_to}", flush=True)
+
+    print("[3/4] Mixing ...", flush=True)
+    voice = _load_mono(args.input)
+    master = assemble(voice, SR, sheet, transcript.speech_spans())
+
+    print(f"[4/4] Loudness-normalizing -> {args.output}", flush=True)
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+        sf.write(tmp.name, master, SR)
+        _loudnorm(tmp.name, args.output)
+    Path(tmp.name).unlink(missing_ok=True)
+
+    print("Done.", flush=True)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

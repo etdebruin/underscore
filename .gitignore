@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+dist/
+
+# generated audio
+examples/output/
+*.wav
+*.aiff
+*.mp3
+*.m4a
