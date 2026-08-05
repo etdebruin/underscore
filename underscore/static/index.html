@@ -101,7 +101,7 @@
   }
   #ruler { height: 22px; position: relative; border-bottom: 1px solid var(--line); cursor: pointer; }
   .tick { position: absolute; top: 0; height: 100%; border-left: 1px solid var(--line); color: var(--muted); font-size: 0.68rem; padding: 3px 0 0 4px; user-select: none; }
-  #voicelane { height: 130px; position: relative; }
+  #voicelane { height: 130px; position: relative; cursor: pointer; }
   #wave { position: absolute; top: 0; bottom: 0; left: 0; }
   .lane { position: relative; border-top: 1px solid var(--line); }
   #stinglane { height: 56px; }
@@ -739,14 +739,18 @@ $("play").onclick = async () => {
     if (!audio.playing) $("play").textContent = "Play";
   }
 };
-$("ruler").onclick = (e) => {
-  const x = e.clientX - $("lanes").getBoundingClientRect().left;
-  audio.offset = x / pxPerSec;
+function seekAt(e) {
+  const x = Math.max(e.clientX - $("lanes").getBoundingClientRect().left, 0);
+  audio.offset = Math.min(x / pxPerSec, outDuration());
   follow = true;
   $("playhead").style.left = x + "px";
   $("time").textContent = `${fmt(audio.offset)} / ${fmt(outDuration())}`;
-  if (audio.playing) startPlayback(audio.offset);
-};
+  if (audio.playing) startPlayback(audio.offset);   // jump there, keep playing
+}
+$("ruler").onclick = seekAt;
+$("voicelane").onclick = seekAt;
+$("stinglane").onclick = seekAt;   // blocks stop propagation, so empty space seeks
+$("bedlane").onclick = seekAt;
 document.body.onkeydown = (e) => {
   if (e.code === "Space" && project && e.target.tagName !== "INPUT" && e.target.tagName !== "SELECT") {
     e.preventDefault(); $("play").click();
