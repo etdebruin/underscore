@@ -164,6 +164,39 @@ def test_unknown_project_404(tmp_path):
     assert client.get("/api/projects/nope").status_code == 404
 
 
+def test_empty_upload_rejected_and_cleaned_up(tmp_path):
+    client = _client(tmp_path)
+    resp = client.post("/api/projects", files={"file": ("cloud.wav", b"", "audio/wav")})
+    assert resp.status_code == 400
+    assert "empty" in resp.json()["detail"]
+    assert list((tmp_path / "projects").glob("*/")) == []
+
+
+def test_delete_project(tmp_path):
+    client = _client(tmp_path)
+    pid = client.post(
+        "/api/projects", files={"file": ("e.wav", _wav_bytes(), "audio/wav")}
+    ).json()["id"]
+    assert client.delete(f"/api/projects/{pid}").status_code == 200
+    assert client.get(f"/api/projects/{pid}").status_code == 404
+
+
+def test_interrupted_projects_marked_error_on_startup(tmp_path):
+    client = _client(tmp_path)
+    pid = client.post(
+        "/api/projects", files={"file": ("e.wav", _wav_bytes(), "audio/wav")}
+    ).json()["id"]
+    meta_path = tmp_path / "projects" / pid / "meta.json"
+    meta = json.loads(meta_path.read_text())
+    meta["status"] = "transcribing"   # simulate a job killed mid-flight
+    meta_path.write_text(json.dumps(meta))
+
+    fresh = _client(tmp_path)         # new server over the same projects dir
+    detail = fresh.get(f"/api/projects/{pid}").json()
+    assert detail["status"] == "error"
+    assert "interrupted" in detail["error"]
+
+
 def test_saved_cues_survive_json_file(tmp_path):
     client = _client(tmp_path)
     pid = client.post(

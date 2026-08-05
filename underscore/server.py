@@ -105,6 +105,13 @@ def create_app(
     )
     app = FastAPI(title="underscore")
 
+    # Jobs die with the process: anything still marked busy was interrupted.
+    for meta_path in root.glob("*/meta.json"):
+        meta = json.loads(meta_path.read_text())
+        if meta.get("status") in ("transcribing", "analyzing", "rendering"):
+            meta.update(status="error", error="interrupted by a server restart - re-add the track")
+            meta_path.write_text(json.dumps(meta, indent=2))
+
     def project(pid: str) -> _Project:
         p = _Project(root / pid)
         if not (p.root / "meta.json").exists():
@@ -143,13 +150,28 @@ def create_app(
         p.root.mkdir(parents=True)
         suffix = Path(file.filename or "audio.wav").suffix or ".wav"
         source = p.root / f"source{suffix}"
-        with source.open("wb") as fh:
+        partial = p.root / "source.partial"
+        with partial.open("wb") as fh:
             shutil.copyfileobj(file.file, fh)
+        if partial.stat().st_size == 0:
+            shutil.rmtree(p.root)
+            raise HTTPException(
+                400,
+                f"'{file.filename}' arrived empty. If it lives in iCloud/OneDrive/"
+                "Dropbox, download it locally first, then drop it again.",
+            )
+        partial.rename(source)
         p.update(name=file.filename, status="transcribing", error=None,
                  scoring=scoring, duration=0.0)
 
         def job():
-            voice = process_voice(str(source), SR, level=False, warm=False)
+            try:
+                voice = process_voice(str(source), SR, level=False, warm=False)
+            except subprocess.CalledProcessError as exc:
+                raise RuntimeError(
+                    f"couldn't decode '{file.filename}' - it doesn't look like a "
+                    "readable audio file"
+                ) from exc
             sf.write(p.root / "voice.wav", voice, SR)
             (p.root / "peaks.json").write_text(json.dumps(_compute_peaks(voice)))
             transcript = transcribe_fn(str(p.root / "voice.wav"))
@@ -165,6 +187,12 @@ def create_app(
 
         run_job(p, job)
         return {"id": pid}
+
+    @app.delete("/api/projects/{pid}")
+    def delete_project(pid: str):
+        p = project(pid)
+        shutil.rmtree(p.root)
+        return {"ok": True}
 
     @app.get("/api/projects/{pid}")
     def detail(pid: str):

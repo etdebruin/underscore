@@ -74,6 +74,14 @@
   .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
   .clip-play { background: none; border: none; padding: 2px 4px; color: var(--muted); }
   .clip-play:hover { color: var(--accent); }
+  .side-item .sub.err { color: var(--tense); }
+  .proj-del {
+    background: none; border: none; padding: 2px; color: var(--muted);
+    visibility: hidden;
+  }
+  .proj-del svg { width: 14px; height: 14px; display: block; }
+  .side-item:hover .proj-del { visibility: visible; }
+  .proj-del:hover { color: var(--tense); }
   #dropzone {
     margin: 8px 14px; padding: 14px; border: 1px dashed var(--line); border-radius: 8px;
     text-align: center; color: var(--muted); font-size: 0.85rem; cursor: pointer;
@@ -346,8 +354,21 @@ async function refreshProjects() {
   for (const p of list.reverse()) {
     const el = document.createElement("div");
     el.className = "side-item" + (project?.id === p.id ? " active" : "");
-    el.innerHTML = `<span class="name">${p.name}</span><span class="sub">${p.status}</span>`;
+    el.innerHTML = `<span class="name">${p.name}</span>
+      <span class="sub${p.status === "error" ? " err" : ""}">${p.status}</span>
+      <button class="proj-del" title="delete episode">${ICONS.trash}</button>`;
     el.onclick = () => openProject(p.id);
+    el.querySelector(".proj-del").onclick = async (e) => {
+      e.stopPropagation();
+      if (!confirm(`Delete "${p.name}"? The rendered MP3 and cue sheet go with it.`)) return;
+      await api(`/api/projects/${p.id}`, { method: "DELETE" });
+      if (project?.id === p.id) {
+        project = null;
+        $("editor").style.display = "none";
+        $("empty").style.display = "flex";
+      }
+      refreshProjects();
+    };
     $("projects").appendChild(el);
   }
 }
@@ -400,8 +421,15 @@ function stopAudition() {
 async function upload(file) {
   const form = new FormData();
   form.append("file", file);
-  const { id } = await api(`/api/projects?scoring=${$("scoring").value}`, { method: "POST", body: form });
-  await openProject(id);
+  try {
+    const { id } = await api(`/api/projects?scoring=${$("scoring").value}`, { method: "POST", body: form });
+    await openProject(id);
+  } catch (err) {
+    let msg = err.message;
+    try { msg = JSON.parse(err.message).detail; } catch {}
+    $("status").textContent = msg;
+    $("status").classList.remove("busy");
+  }
 }
 
 // ---------- project lifecycle ----------
