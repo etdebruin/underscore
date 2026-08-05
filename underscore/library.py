@@ -56,6 +56,10 @@ class Library:
     def has(self, clip_id: str) -> bool:
         return self.path_for(clip_id).exists()
 
+    def delete(self, clip_id: str) -> None:
+        self.path_for(clip_id).unlink(missing_ok=True)
+        (self.root / f"{clip_id}.json").unlink(missing_ok=True)
+
     def load(self, clip_id: str, duration: float, sr: int) -> np.ndarray:
         """Stereo float32 clip fitted to exactly `duration` seconds."""
         clip = _decode(self.path_for(clip_id), sr)

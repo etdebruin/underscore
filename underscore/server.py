@@ -320,6 +320,13 @@ def create_app(
     def library_catalog():
         return [dataclasses.asdict(e) for e in lib.catalog()]
 
+    @app.delete("/api/library/{clip_id}")
+    def delete_clip(clip_id: str):
+        if not lib.has(clip_id):
+            raise HTTPException(404, "unknown clip")
+        lib.delete(clip_id)
+        return {"ok": True}
+
     @app.get("/api/library/{clip_id}/audio")
     def library_audio(clip_id: str):
         if not lib.has(clip_id):

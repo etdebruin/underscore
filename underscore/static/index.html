@@ -383,10 +383,19 @@ async function refreshLibrary() {
     el.innerHTML = `<span class="dot" style="background:${moodColor(c.mood)}"></span>
       <span class="name">${c.description || c.mood}</span>
       <span class="sub">${Math.round(c.length_ms / 1000)}s</span>
-      <button class="clip-play" title="audition">${ICONS.play}</button>`;
+      <button class="clip-play" title="audition">${ICONS.play}</button>
+      <button class="proj-del" title="delete clip">${ICONS.trash}</button>`;
     el.querySelector(".clip-play").onclick = (e) => {
       e.stopPropagation();
       playAudition(`/api/library/${c.clip_id}/audio`, c.clip_id, e.currentTarget);
+    };
+    el.querySelector(".proj-del").onclick = async (e) => {
+      e.stopPropagation();
+      if (!confirm(`Delete this clip? Cues using it will fall back to regenerating.`)) return;
+      if (audition.key === c.clip_id) stopAudition();
+      await api(`/api/library/${c.clip_id}`, { method: "DELETE" });
+      refreshLibrary();
+      if (project) loadClipBuffers();
     };
     $("library").appendChild(el);
   }

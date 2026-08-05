@@ -49,6 +49,14 @@ def test_load_loops_short_clip(tmp_path):
     assert clip.shape == (SR * 8, 2)
 
 
+def test_delete_removes_audio_and_sidecar(tmp_path):
+    lib = Library(tmp_path)
+    _seed_clip(lib)
+    lib.delete("abc123")
+    assert not lib.has("abc123")
+    assert lib.catalog() == []
+
+
 def test_catalog_text_lists_clips(tmp_path):
     lib = Library(tmp_path)
     _seed_clip(lib)
