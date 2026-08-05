@@ -121,6 +121,29 @@
     pointer-events: none; z-index: 4; box-shadow: 0 0 6px var(--accent-dim);
   }
 
+  #preparing {
+    flex: 1; display: flex; align-items: center; justify-content: center;
+  }
+  .prep-card { min-width: 340px; }
+  .prep-title { font-weight: 600; margin-bottom: 14px; font-size: 1.05rem; }
+  .prep-step {
+    display: flex; align-items: center; gap: 10px; padding: 7px 0;
+    color: var(--muted); transition: color 200ms ease-out;
+  }
+  .prep-step .prep-dot {
+    width: 9px; height: 9px; border-radius: 50%; background: var(--line); flex-shrink: 0;
+  }
+  .prep-step.done { color: var(--text); }
+  .prep-step.done .prep-dot { background: var(--uplifting); }
+  .prep-step.active { color: var(--text); }
+  .prep-step.active .prep-dot { background: var(--accent); animation: pulse 1.2s infinite; }
+  #renderpill {
+    position: absolute; top: 10px; right: 16px; z-index: 6;
+    background: var(--panel-2); border: 1px solid var(--accent); border-radius: 999px;
+    padding: 5px 14px; font-size: 0.85rem; display: none;
+  }
+  #renderpill::after { content: "…"; animation: pulse 1.2s infinite; }
+
   #inspector {
     border-top: 1px solid var(--line); background: var(--panel);
     padding: 10px 16px; display: flex; gap: 14px; align-items: center; min-height: 58px;
@@ -162,13 +185,23 @@
       <div class="big">Add a voice track to begin</div>
       <div>Whisper transcribes it, Claude drafts the cue sheet, you fine-tune it here.</div>
     </div>
-    <div id="editor" style="display:none; flex:1; flex-direction:column; min-height:0;">
+    <div id="editor" style="display:none; flex:1; flex-direction:column; min-height:0; position:relative;">
       <div id="transport">
         <button id="play">Play</button>
         <span id="time">0:00.0 / 0:00.0</span>
-        <input type="range" id="zoom" min="4" max="60" value="8" title="zoom">
+        <button id="fit" title="fit whole track">Fit</button>
+        <input type="range" id="zoom" min="0" max="100" value="0" title="zoom">
         <span class="hint" style="color:var(--muted); font-size:0.8rem;">drag blocks to retime, click to edit &middot; dashed = placeholder music until first render</span>
       </div>
+      <div id="preparing" style="display:none">
+        <div class="prep-card">
+          <div class="prep-title">Preparing your track</div>
+          <div class="prep-step" data-step="decode"><span class="prep-dot"></span>Decoding audio &amp; drawing the waveform</div>
+          <div class="prep-step" data-step="transcribe"><span class="prep-dot"></span>Transcribing with Whisper</div>
+          <div class="prep-step" data-step="analyze"><span class="prep-dot"></span>Claude is drafting the cue sheet</div>
+        </div>
+      </div>
+      <div id="renderpill">Rendering master</div>
       <div id="timeline">
         <div id="lanes">
           <div id="ruler"></div>
@@ -196,6 +229,22 @@ let project = null;      // {id, name, status, duration, cues, has_scored}
 let peaks = null;
 let peaksMax = null;
 let pxPerSec = 8;
+const MAX_ZOOM = 60;
+function minZoom() {
+  const total = outDuration() || 1;
+  return Math.min(($("timeline").clientWidth - 2) / total, MAX_ZOOM);
+}
+function setZoom(next, anchorOutTime = null) {
+  const tl = $("timeline");
+  const anchor = anchorOutTime ?? (tl.scrollLeft + tl.clientWidth / 2) / pxPerSec;
+  const anchorPx = anchor * pxPerSec - tl.scrollLeft;
+  pxPerSec = Math.min(Math.max(next, minZoom()), MAX_ZOOM);
+  const lo = minZoom();
+  $("zoom").value = Math.round(100 * Math.log(pxPerSec / lo) / Math.log(MAX_ZOOM / lo || 2)) || 0;
+  layout();
+  tl.scrollLeft = Math.max(anchor * pxPerSec - anchorPx, 0);
+  drawWave();
+}
 let selected = null;     // {kind, index}
 let audio = { ctx: null, voiceBuf: null, clipBufs: {}, playing: false, nodes: [], startedAt: 0, offset: 0 };
 let saveTimer = null;
@@ -303,13 +352,28 @@ async function openProject(id) {
   setStatus();
   if (project.status === "ready") await loadAssets();
   else pollUntilReady();
-  layout();
+  setZoom(minZoom());               // open with the whole track in view
+  $("timeline").scrollLeft = 0;
 }
 
 function setStatus() {
   const busy = ["transcribing", "analyzing", "rendering"].includes(project?.status);
   $("status").textContent = project ? `${project.name}: ${project.status}${project.error ? " - " + project.error : ""}` : "";
   $("status").classList.toggle("busy", busy);
+
+  const preparing = ["transcribing", "analyzing"].includes(project?.status);
+  $("preparing").style.display = preparing ? "flex" : "none";
+  $("transport").style.display = preparing ? "none" : "flex";
+  $("timeline").style.display = preparing ? "none" : "block";
+  $("inspector").style.display = preparing ? "none" : "flex";
+  $("renderpill").style.display = project?.status === "rendering" ? "block" : "none";
+  if (preparing) {
+    const activeIdx = project.status === "analyzing" ? 2 : project.has_peaks ? 1 : 0;
+    document.querySelectorAll(".prep-step").forEach((el, i) => {
+      el.classList.toggle("done", i < activeIdx);
+      el.classList.toggle("active", i === activeIdx);
+    });
+  }
   $("render").disabled = busy || !project?.cues;
   $("reanalyze").disabled = busy || !project;
   $("download").style.display = project?.has_scored && !busy ? "" : "none";
@@ -321,6 +385,7 @@ function setStatus() {
 
 async function pollUntilReady() {
   const id = project.id;
+  const wasIngesting = ["transcribing", "analyzing"].includes(project.status);
   while (project?.id === id && ["transcribing", "analyzing", "rendering"].includes(project.status)) {
     await new Promise((r) => setTimeout(r, 1500));
     if (project?.id !== id) return;
@@ -328,7 +393,11 @@ async function pollUntilReady() {
     project = { ...fresh, id };
     setStatus(); layout();
   }
-  if (project?.id === id && project.status === "ready") { await loadAssets(); layout(); }
+  if (project?.id === id && project.status === "ready") {
+    await loadAssets();
+    if (wasIngesting) { setZoom(minZoom()); $("timeline").scrollLeft = 0; }
+    else layout();
+  }
   refreshProjects(); refreshLibrary();
 }
 
@@ -400,7 +469,8 @@ function drawRuler() {
   const ruler = $("ruler");
   ruler.innerHTML = "";
   const total = outDuration();
-  const step = pxPerSec > 30 ? 5 : pxPerSec > 12 ? 15 : pxPerSec > 6 ? 30 : 60;
+  const step = pxPerSec > 30 ? 5 : pxPerSec > 12 ? 15 : pxPerSec > 6 ? 30
+    : pxPerSec > 2.5 ? 60 : pxPerSec > 1 ? 120 : 300;
   for (let s = 0; s <= total; s += step) {
     const tick = document.createElement("div");
     tick.className = "tick";
@@ -647,7 +717,18 @@ document.body.onkeydown = (e) => {
 };
 
 // ---------- header actions ----------
-$("zoom").oninput = () => { pxPerSec = +$("zoom").value; layout(); };
+$("zoom").oninput = () => {
+  const lo = minZoom();
+  setZoom(lo * Math.pow(MAX_ZOOM / lo, +$("zoom").value / 100));
+};
+$("fit").onclick = () => { setZoom(minZoom()); $("timeline").scrollLeft = 0; };
+$("timeline").addEventListener("wheel", (e) => {
+  if (!e.ctrlKey && !e.metaKey) return;   // trackpad pinch arrives as ctrl+wheel
+  e.preventDefault();
+  const rect = $("timeline").getBoundingClientRect();
+  const anchor = ($("timeline").scrollLeft + e.clientX - rect.left) / pxPerSec;
+  setZoom(pxPerSec * Math.exp(-e.deltaY * 0.012), anchor);
+}, { passive: false });
 $("reanalyze").onclick = async () => {
   await api(`/api/projects/${project.id}/analyze`, {
     method: "POST", headers: { "Content-Type": "application/json" },
@@ -663,7 +744,7 @@ $("render").onclick = async () => {
   project.status = "rendering"; setStatus(); pollUntilReady();
 };
 
-window.onresize = layout;
+window.onresize = () => setZoom(pxPerSec);
 $("timeline").addEventListener("scroll", () => requestAnimationFrame(drawWave));
 refreshProjects(); refreshLibrary();
 </script>

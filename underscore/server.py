@@ -172,7 +172,8 @@ def create_app(
         meta = p.meta()
         cues = p.cues() if (p.root / "cues.json").exists() else None
         return {**meta, "id": pid, "cues": cues,
-                "has_scored": (p.root / "scored.mp3").exists()}
+                "has_scored": (p.root / "scored.mp3").exists(),
+                "has_peaks": (p.root / "peaks.json").exists()}
 
     @app.get("/api/projects/{pid}/peaks")
     def peaks(pid: str):
