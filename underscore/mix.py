@@ -77,14 +77,24 @@ def _place(canvas: np.ndarray, clip: np.ndarray, at: int) -> None:
         canvas[start:end] += clip[start - at : end - at]
 
 
+def _synth_bed(mood: str, duration: float, sr: int, seed: int = 0, reason: str = "") -> np.ndarray:
+    return generate_bed(mood, duration, sr, seed=seed)
+
+
 def assemble(
     voice: np.ndarray,
     sr: int,
     sheet: CueSheet,
     speech_spans: list[tuple[float, float]],
     seed: int = 1,
+    bed_fn=None,
 ) -> np.ndarray:
-    """Mix voice + cue sheet into a stereo master. `voice` is mono float32."""
+    """Mix voice + cue sheet into a stereo master. `voice` is mono float32.
+
+    `bed_fn(mood, duration, sr, seed, reason)` supplies music clips; defaults to
+    the built-in procedural synth pads.
+    """
+    bed_fn = bed_fn or _synth_bed
     total = len(voice) / sr
     gaps = find_gaps(speech_spans, total)
 
@@ -111,7 +121,7 @@ def assemble(
     for k, ins in enumerate(inserts):
         at = shift_time(ins.time, inserts)
         clip_dur = PRE_OVERLAP + ins.duration + POST_OVERLAP
-        bed = generate_bed(ins.mood, clip_dur, sr, seed=seed + k)
+        bed = bed_fn(ins.mood, clip_dur, sr, seed=seed + k, reason=ins.reason)
         env = np.ones(bed.shape[0], dtype=np.float32)
         pre, post = int(PRE_OVERLAP * sr), int(POST_OVERLAP * sr)
         env[:pre] = np.linspace(0.0, 1.0, pre)
@@ -127,7 +137,7 @@ def assemble(
         n = int((end - start) * sr)
         if n <= 0:
             continue
-        bed = generate_bed(u.mood, end - start, sr, seed=seed + 100 + k)
+        bed = bed_fn(u.mood, end - start, sr, seed=seed + 100 + k, reason=u.reason)
         n = min(n, bed.shape[0])
         bed = bed[:n]
         local_speech = [(s - start, e - start) for s, e in shifted_speech if e > start and s < end]

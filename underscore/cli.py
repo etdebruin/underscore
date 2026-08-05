@@ -6,6 +6,7 @@
 import argparse
 import dataclasses
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -50,6 +51,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("-o", "--output", required=True, help="Output file (.wav/.mp3/.m4a)")
     parser.add_argument("--cues", help="Use/save cue sheet JSON instead of calling Claude")
     parser.add_argument("--save-cues", help="Write the generated cue sheet to this JSON file")
+    parser.add_argument(
+        "--music",
+        choices=["elevenlabs", "synth"],
+        default=None,
+        help="Music backend (default: elevenlabs when ELEVENLABS_API_KEY is set, else synth)",
+    )
     args = parser.parse_args(argv)
 
     print(f"[1/4] Transcribing {args.input} ...", flush=True)
@@ -77,9 +84,15 @@ def main(argv: list[str] | None = None) -> int:
         Path(save_to).write_text(sheet_json)
         print(f"      cue sheet saved to {save_to}", flush=True)
 
-    print("[3/4] Mixing ...", flush=True)
+    backend = args.music or ("elevenlabs" if os.environ.get("ELEVENLABS_API_KEY") else "synth")
+    bed_fn = None
+    if backend == "elevenlabs":
+        from .elevenlabs_music import ElevenLabsMusic
+
+        bed_fn = ElevenLabsMusic().bed
+    print(f"[3/4] Mixing (music: {backend}) ...", flush=True)
     voice = _load_mono(args.input)
-    master = assemble(voice, SR, sheet, transcript.speech_spans())
+    master = assemble(voice, SR, sheet, transcript.speech_spans(), bed_fn=bed_fn)
 
     print(f"[4/4] Loudness-normalizing -> {args.output}", flush=True)
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
