@@ -38,6 +38,27 @@ def build_filter(level: bool, warm: bool) -> str:
     return ",".join(chains)
 
 
+def main(argv: list[str] | None = None) -> int:
+    """Apply the voice treatment to a file, so a take can be auditioned dry vs treated.
+
+    uv run python -m underscore.voicefx take.webm -o treated.wav [--no-warm] [--no-level]
+    """
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Treat a voice recording")
+    parser.add_argument("input")
+    parser.add_argument("-o", "--output", required=True, help="Output .wav")
+    parser.add_argument("--sr", type=int, default=44100)
+    parser.add_argument("--level", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--warm", action=argparse.BooleanOptionalAction, default=True)
+    args = parser.parse_args(argv)
+
+    voice = process_voice(args.input, args.sr, level=args.level, warm=args.warm)
+    sf.write(args.output, voice, args.sr)
+    print(f"{len(voice) / args.sr:.1f}s -> {args.output}")
+    return 0
+
+
 def process_voice(path: str, sr: int, level: bool = True, warm: bool = True) -> np.ndarray:
     """Decode any audio file to mono float32 at `sr`, with optional treatment."""
     filters = build_filter(level=level, warm=warm)
@@ -49,3 +70,9 @@ def process_voice(path: str, sr: int, level: bool = True, warm: bool = True) -> 
         data, _ = sf.read(tmp.name, dtype="float32")
     Path(tmp.name).unlink(missing_ok=True)
     return data
+
+
+if __name__ == "__main__":
+    import sys
+
+    sys.exit(main())
