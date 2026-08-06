@@ -115,7 +115,9 @@ def create_app(
     lib = library or Library()
     transcribe_fn = transcribe_fn or transcribe
     analyze_fn = analyze_fn or (
-        lambda transcript, scoring, catalog: analyze(transcript, scoring=scoring, catalog=catalog)
+        lambda transcript, scoring, catalog, clips=None: analyze(
+            transcript, scoring=scoring, catalog=catalog, clips=clips
+        )
     )
     app = FastAPI(title="underscore")
 
@@ -256,7 +258,10 @@ def create_app(
 
         def job():
             transcript = p.transcript()
-            sheet = analyze_fn(transcript, p.meta()["scoring"], catalog_text(lib.catalog()))
+            # Keep any placed voice clips and let the producer score around them.
+            clips = sheet_from_dict(p.cues()).clips if (p.root / "cues.json").exists() else []
+            sheet = analyze_fn(transcript, p.meta()["scoring"], catalog_text(lib.catalog()), clips)
+            sheet.clips = clips
             sheet = _snap_inserts(sheet, transcript, max_dist=6.0)
             (p.root / "cues.json").write_text(json.dumps(dataclasses.asdict(sheet), indent=2))
             p.update(status="ready")

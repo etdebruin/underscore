@@ -70,6 +70,11 @@ def main(argv: list[str] | None = None) -> int:
     transcript = transcribe(args.input)
     print(f"      {len(transcript.words)} words, {transcript.duration:.1f}s", flush=True)
 
+    # Voice clips are loaded first so the music producer can score around them.
+    clip_cues = (
+        sheet_from_dict(json.loads(Path(args.clips).read_text())).clips if args.clips else []
+    )
+
     if args.cues and Path(args.cues).exists():
         print(f"[2/4] Loading cue sheet from {args.cues}", flush=True)
         sheet = sheet_from_dict(json.loads(Path(args.cues).read_text()))
@@ -77,11 +82,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[2/4] Asking Claude for a cue sheet ({args.scoring} scoring) ...", flush=True)
         library = Library()
         sheet = analyze(transcript, scoring=args.scoring,
-                        catalog=catalog_text(library.catalog()))
+                        catalog=catalog_text(library.catalog()), clips=clip_cues)
 
     if args.clips:
-        sheet.clips = sheet_from_dict(json.loads(Path(args.clips).read_text())).clips
-        print(f"      merged {len(sheet.clips)} voice clips from {args.clips}", flush=True)
+        sheet.clips = clip_cues
+        print(f"      merged {len(clip_cues)} voice clips from {args.clips}", flush=True)
 
     sheet_json = json.dumps(dataclasses.asdict(sheet), indent=2)
     for ins in sheet.inserts:

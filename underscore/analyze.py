@@ -2,7 +2,7 @@
 
 from pydantic import BaseModel, Field
 
-from .cues import CueSheet, validate_cues
+from .cues import Clip, CueSheet, validate_cues
 from .transcribe import Transcript
 
 MODEL = "claude-opus-5"
@@ -87,35 +87,55 @@ def _timed_transcript(transcript: Transcript) -> str:
     return "\n".join(lines)
 
 
+CLIPS_GUIDANCE = """
+This episode is a narrated documentary: at the marked CLIP moments the narration
+stops and the subject's own recorded voice plays. Those moments are already a
+break in the narration, so:
+- Do NOT put an insert at a clip moment — the clip is the break. Keep inserts at
+  least ~15 seconds away from one.
+- A bed may run under the narration leading into a clip and stop there, or pick
+  up after it. Beds continue under the clip if you span it, so only span one when
+  music under the subject's voice genuinely serves the moment.
+- The strongest cue is often a short sting shortly AFTER a clip, letting the
+  quote land before the host resumes."""
+
+
+def _clips_block(clips: list[Clip]) -> str:
+    lines = [
+        f"[{c.time:7.2f}s] CLIP {c.clip_id} — {c.reason or 'the subject speaks'}"
+        for c in sorted(clips, key=lambda c: c.time)
+    ]
+    return "The subject's voice clips land here (times on this same track):\n" + "\n".join(lines)
+
+
 def analyze(
     transcript: Transcript,
     client=None,
     scoring: str = "standard",
     catalog: str = "",
+    clips: list[Clip] | None = None,
 ) -> CueSheet:
     import anthropic
 
     client = client or anthropic.Anthropic()
     system = f"{SYSTEM}\n\n{DENSITY.get(scoring, DENSITY['standard'])}"
+    if clips:
+        system += f"\n{CLIPS_GUIDANCE}"
     if catalog:
         system += (
             f"\n\n{catalog}\n\nReusing a clip keeps the show sonically consistent and is "
             "free; set clip_id when a clip's mood and original scene fit the new moment. "
             "Set clip_id to null when the moment deserves bespoke music."
         )
+    content = f"Track duration: {transcript.duration:.1f}s.\n"
+    if clips:
+        content += f"\n{_clips_block(clips)}\n"
+    content += f"\nTranscript with timestamps:\n\n{_timed_transcript(transcript)}"
     response = client.messages.parse(
         model=MODEL,
         max_tokens=4096,
         system=system,
-        messages=[
-            {
-                "role": "user",
-                "content": (
-                    f"Track duration: {transcript.duration:.1f}s.\n"
-                    f"Transcript with timestamps:\n\n{_timed_transcript(transcript)}"
-                ),
-            }
-        ],
+        messages=[{"role": "user", "content": content}],
         output_format=RawCueSheet,
     )
     raw = response.parsed_output
