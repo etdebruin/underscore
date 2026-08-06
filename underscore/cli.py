@@ -43,6 +43,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("-o", "--output", required=True, help="Output file (.wav/.mp3/.m4a)")
     parser.add_argument("--cues", help="Use/save cue sheet JSON instead of calling Claude")
     parser.add_argument("--save-cues", help="Write the generated cue sheet to this JSON file")
+    parser.add_argument("--clips", help="Merge voice-clip cues from this JSON (e.g. align_clips output)")
     parser.add_argument(
         "--music",
         choices=["elevenlabs", "synth"],
@@ -77,6 +78,10 @@ def main(argv: list[str] | None = None) -> int:
         library = Library()
         sheet = analyze(transcript, scoring=args.scoring,
                         catalog=catalog_text(library.catalog()))
+
+    if args.clips:
+        sheet.clips = sheet_from_dict(json.loads(Path(args.clips).read_text())).clips
+        print(f"      merged {len(sheet.clips)} voice clips from {args.clips}", flush=True)
 
     sheet_json = json.dumps(dataclasses.asdict(sheet), indent=2)
     for ins in sheet.inserts:

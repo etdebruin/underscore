@@ -63,3 +63,34 @@ def transcribe(audio_path: str) -> Transcript:
     ]
     duration = words[-1].end if words else 0.0
     return Transcript(text=result["text"].strip(), words=words, duration=duration)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Standalone transcription: audio in, transcript JSON out.
+
+    uv run python -m underscore.transcribe interview.m4a -o transcript.json
+    """
+    import argparse
+    import dataclasses
+    import json
+    from pathlib import Path
+
+    parser = argparse.ArgumentParser(description="Transcribe audio to word-timestamp JSON")
+    parser.add_argument("input", help="Audio file (any format ffmpeg reads)")
+    parser.add_argument("-o", "--output", help="JSON path (default: stdout)")
+    args = parser.parse_args(argv)
+
+    transcript = transcribe(args.input)
+    out = json.dumps(dataclasses.asdict(transcript))
+    if args.output:
+        Path(args.output).write_text(out)
+        print(f"{len(transcript.words)} words, {transcript.duration:.1f}s -> {args.output}")
+    else:
+        print(out)
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+
+    sys.exit(main())
