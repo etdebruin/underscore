@@ -15,7 +15,7 @@ from pathlib import Path
 import soundfile as sf
 
 from .analyze import analyze
-from .cues import CueSheet, Insert, Underlay
+from .cues import sheet_from_dict
 from .env import load_dotenv, preflight
 from .library import Library, catalog_text
 from .mix import assemble
@@ -71,11 +71,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cues and Path(args.cues).exists():
         print(f"[2/4] Loading cue sheet from {args.cues}", flush=True)
-        raw = json.loads(Path(args.cues).read_text())
-        sheet = CueSheet(
-            inserts=[Insert(**i) for i in raw["inserts"]],
-            underlays=[Underlay(**u) for u in raw["underlays"]],
-        )
+        sheet = sheet_from_dict(json.loads(Path(args.cues).read_text()))
     else:
         print(f"[2/4] Asking Claude for a cue sheet ({args.scoring} scoring) ...", flush=True)
         library = Library()
@@ -87,6 +83,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"      insert   @{ins.time:6.1f}s  {ins.duration:.0f}s {ins.mood:<10} {ins.reason}")
     for u in sheet.underlays:
         print(f"      underlay {u.start:6.1f}-{u.end:.1f}s  {u.mood:<10} {u.reason}")
+    for c in sheet.clips:
+        print(f"      clip     @{c.time:6.1f}s  {c.clip_id:<24} {c.reason}")
     save_to = args.save_cues or args.cues
     if save_to:
         Path(save_to).write_text(sheet_json)
@@ -101,7 +99,9 @@ def main(argv: list[str] | None = None) -> int:
     fx = [name for name, on in (("warm", args.warm), ("level", args.level)) if on]
     print(f"[3/4] Mixing (music: {backend}; voice fx: {', '.join(fx) or 'none'}) ...", flush=True)
     voice = process_voice(args.input, SR, level=args.level, warm=args.warm)
-    master = assemble(voice, SR, sheet, transcript.speech_spans(), bed_fn=bed_fn)
+    clip_fn = Library().load_raw if sheet.clips else None
+    master = assemble(voice, SR, sheet, transcript.speech_spans(), bed_fn=bed_fn,
+                      clip_fn=clip_fn)
 
     print(f"[4/4] Loudness-normalizing -> {args.output}", flush=True)
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:

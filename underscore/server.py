@@ -21,7 +21,7 @@ from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 
 from .analyze import analyze
-from .cues import CueSheet, Insert, Underlay
+from .cues import CueSheet, sheet_from_dict
 from .elevenlabs_music import MIN_LENGTH_MS, build_prompt
 from .library import Library, catalog_text
 from .mix import POST_OVERLAP, PRE_OVERLAP, assemble, find_gaps, snap_to_gap
@@ -61,6 +61,8 @@ def _snap_inserts(sheet: CueSheet, transcript: Transcript, max_dist: float) -> C
     gaps = find_gaps(transcript.speech_spans(), transcript.duration)
     for ins in sheet.inserts:
         ins.time = round(snap_to_gap(ins.time, gaps, max_dist=max_dist), 2)
+    for clip in sheet.clips:
+        clip.time = round(snap_to_gap(clip.time, gaps, max_dist=max_dist), 2)
     return sheet
 
 
@@ -240,10 +242,7 @@ def create_app(
     @app.put("/api/projects/{pid}/cues")
     def save_cues(pid: str, cues: dict):
         p = project(pid)
-        sheet = CueSheet(
-            inserts=[Insert(**i) for i in cues.get("inserts", [])],
-            underlays=[Underlay(**u) for u in cues.get("underlays", [])],
-        )
+        sheet = sheet_from_dict(cues)
         if (p.root / "transcript.json").exists():
             # gentler tolerance for hand-placed cues than for Claude's proposals
             sheet = _snap_inserts(sheet, p.transcript(), max_dist=2.0)
@@ -271,11 +270,7 @@ def create_app(
         p.update(status="rendering")
 
         def job():
-            cues = p.cues()
-            sheet = CueSheet(
-                inserts=[Insert(**i) for i in cues["inserts"]],
-                underlays=[Underlay(**u) for u in cues["underlays"]],
-            )
+            sheet = sheet_from_dict(p.cues())
             bed_fn = None
             if body.get("music", "elevenlabs") == "elevenlabs":
                 from .elevenlabs_music import ElevenLabsMusic
@@ -283,7 +278,8 @@ def create_app(
                 bed_fn = ElevenLabsMusic(library=lib).bed
             voice = process_voice(str(p.source_path()), SR,
                                   level=body.get("level", True), warm=body.get("warm", True))
-            master = assemble(voice, SR, sheet, p.transcript().speech_spans(), bed_fn=bed_fn)
+            master = assemble(voice, SR, sheet, p.transcript().speech_spans(), bed_fn=bed_fn,
+                              clip_fn=lib.load_raw if sheet.clips else None)
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
                 sf.write(tmp.name, master, SR)
                 subprocess.run(
@@ -311,6 +307,15 @@ def create_app(
         """The music clip a cue resolves to, if it exists in the library yet."""
         p = project(pid)
         cues = p.cues()
+        if kind == "clip":
+            group = cues.get("clips", [])
+            if index >= len(group):
+                raise HTTPException(404, "no such cue")
+            clip_id = group[index]["clip_id"]
+            if not lib.has(clip_id):
+                raise HTTPException(404, "clip not in library")
+            return FileResponse(lib.path_for(clip_id), media_type="audio/mpeg",
+                                headers={"X-Clip-Source": "library"})
         group = cues["inserts"] if kind == "insert" else cues["underlays"]
         if index >= len(group):
             raise HTTPException(404, "no such cue")

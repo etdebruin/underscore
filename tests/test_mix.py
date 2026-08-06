@@ -1,7 +1,16 @@
 import numpy as np
+import pytest
 
-from underscore.cues import CueSheet, Insert, Underlay
-from underscore.mix import assemble, duck_envelope, find_gaps, shift_time, snap_to_gap
+from underscore.cues import Clip, CueSheet, Insert, Underlay
+from underscore.mix import (
+    CLIP_PAD_POST,
+    CLIP_PAD_PRE,
+    assemble,
+    duck_envelope,
+    find_gaps,
+    shift_time,
+    snap_to_gap,
+)
 
 SR = 44100
 
@@ -53,6 +62,92 @@ def test_assemble_lengthens_by_insert_durations():
     expected = int(SR * (dur + 5.0))
     assert abs(out.shape[0] - expected) < SR * 0.1
     assert out.ndim == 2 and out.shape[1] == 2
+
+
+def test_bed_fn_receives_insert_clip_id():
+    seen = []
+
+    def bed_fn(mood, duration, sr, seed=0, reason="", clip_id=None):
+        seen.append(clip_id)
+        return np.zeros((int(duration * sr), 2), dtype=np.float32)
+
+    voice = np.zeros(SR * 30, dtype=np.float32)
+    sheet = CueSheet(
+        inserts=[Insert(time=15.0, duration=4.0, mood="warm", reason="", clip_id="abc123")],
+    )
+    assemble(voice, SR, sheet, speech_spans=[(0.0, 14.5), (15.5, 30.0)], bed_fn=bed_fn)
+    assert seen == ["abc123"]
+
+
+def _const_clip(seconds: float, value: float = 0.25) -> np.ndarray:
+    return np.full((int(seconds * SR), 2), value, dtype=np.float32)
+
+
+def test_clip_spliced_verbatim_at_natural_length():
+    voice = np.zeros(SR * 30, dtype=np.float32)
+    sheet = CueSheet(clips=[Clip(time=15.0, clip_id="quote-1")])
+    out = assemble(
+        voice, SR, sheet, speech_spans=[(0.0, 14.5), (15.5, 30.0)],
+        clip_fn=lambda cid, sr: _const_clip(3.0),
+    )
+    expected = int(SR * (30.0 + CLIP_PAD_PRE + 3.0 + CLIP_PAD_POST))
+    assert abs(out.shape[0] - expected) < SR * 0.1
+    # the quote plays unscaled (no loop, no peak-normalize) in the spliced pause
+    mid = int((15.0 + CLIP_PAD_PRE + 1.5) * SR)
+    assert np.isclose(out[mid, 0], 0.25, atol=0.01)
+    assert np.isclose(np.max(np.abs(out)), 0.25, atol=0.01)
+
+
+def test_clip_gain_applied():
+    voice = np.zeros(SR * 30, dtype=np.float32)
+    sheet = CueSheet(clips=[Clip(time=15.0, clip_id="quote-1", gain=0.5)])
+    out = assemble(
+        voice, SR, sheet, speech_spans=[(0.0, 14.5), (15.5, 30.0)],
+        clip_fn=lambda cid, sr: _const_clip(3.0),
+    )
+    assert np.isclose(np.max(np.abs(out)), 0.125, atol=0.01)
+
+
+def test_clips_require_clip_fn():
+    voice = np.zeros(SR * 10, dtype=np.float32)
+    sheet = CueSheet(clips=[Clip(time=5.0, clip_id="quote-1")])
+    with pytest.raises(ValueError):
+        assemble(voice, SR, sheet, speech_spans=[(0.0, 10.0)])
+
+
+def test_shift_time_counts_clip_splices():
+    voice = np.zeros(SR * 30, dtype=np.float32)
+    sheet = CueSheet(
+        inserts=[Insert(time=25.0, duration=4.0, mood="warm", reason="")],
+        clips=[Clip(time=15.0, clip_id="quote-1")],
+    )
+    out = assemble(
+        voice, SR, sheet,
+        speech_spans=[(0.0, 14.5), (15.5, 24.5), (25.5, 30.0)],
+        clip_fn=lambda cid, sr: _const_clip(3.0),
+    )
+    expected = int(SR * (30.0 + CLIP_PAD_PRE + 3.0 + CLIP_PAD_POST + 4.0))
+    assert abs(out.shape[0] - expected) < SR * 0.1
+
+
+def test_underlay_ducks_under_clip():
+    voice = np.zeros(SR * 30, dtype=np.float32)
+    speech = [(0.0, 12.0), (18.0, 30.0)]
+    sheet = CueSheet(
+        underlays=[Underlay(start=1.0, end=29.0, mood="warm", reason="")],
+        clips=[Clip(time=15.0, clip_id="quote-1")],
+    )
+
+    def bed_fn(mood, duration, sr, seed=0, reason="", clip_id=None):
+        return np.full((int(duration * sr), 2), 0.5, dtype=np.float32)
+
+    out = assemble(
+        voice, SR, sheet, speech_spans=speech, bed_fn=bed_fn,
+        clip_fn=lambda cid, sr: np.zeros((SR * 3, 2), dtype=np.float32),  # silent: isolate the bed
+    )
+    clip_center = int((15.0 + CLIP_PAD_PRE + 1.5) * SR)
+    open_gap = int(13.0 * SR)  # inside the same silence, before the clip: bed at full
+    assert abs(out[clip_center, 0]) < abs(out[open_gap, 0]) * 0.6
 
 
 def test_assemble_output_does_not_clip():

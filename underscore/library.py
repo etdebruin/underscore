@@ -25,6 +25,7 @@ class ClipEntry:
     mood: str
     description: str
     length_ms: int
+    kind: str = "music"  # "music" beds/stings vs imported "speech" quotes
 
 
 class Library:
@@ -36,9 +37,9 @@ class Library:
         return self.root / f"{clip_id}.audio"
 
     def register(self, clip_id: str, mood: str, description: str, length_ms: int,
-                 prompt: str = "") -> None:
+                 prompt: str = "", kind: str = "music") -> None:
         meta = {"clip_id": clip_id, "mood": mood, "description": description,
-                "length_ms": length_ms, "prompt": prompt}
+                "length_ms": length_ms, "prompt": prompt, "kind": kind}
         (self.root / f"{clip_id}.json").write_text(json.dumps(meta, indent=2))
 
     def catalog(self) -> list[ClipEntry]:
@@ -50,6 +51,7 @@ class Library:
                     clip_id=meta["clip_id"], mood=meta.get("mood", ""),
                     description=meta.get("description", ""),
                     length_ms=int(meta.get("length_ms", 0)),
+                    kind=meta.get("kind", "music"),
                 ))
         return entries
 
@@ -64,6 +66,10 @@ class Library:
         """Stereo float32 clip fitted to exactly `duration` seconds."""
         clip = _decode(self.path_for(clip_id), sr)
         return fit_clip(clip, round(duration * sr))
+
+    def load_raw(self, clip_id: str, sr: int) -> np.ndarray:
+        """Stereo float32 clip verbatim: natural length, no loop, no normalize."""
+        return _decode(self.path_for(clip_id), sr)
 
 
 def fit_clip(clip: np.ndarray, n: int) -> np.ndarray:
@@ -92,7 +98,9 @@ def _decode(path: Path, sr: int) -> np.ndarray:
 
 
 def catalog_text(entries: list[ClipEntry]) -> str:
-    """Render the catalog for the analyzer prompt."""
+    """Render the catalog for the analyzer prompt — music only; speech quotes
+    are placed by the alignment tool, never offered to the music producer."""
+    entries = [e for e in entries if e.kind == "music"]
     if not entries:
         return ""
     lines = ["Existing music clips available for reuse (prefer reusing when one fits):"]

@@ -34,9 +34,33 @@ class Underlay:
 
 
 @dataclass
+class Clip:
+    """An external voice clip (e.g. the subject speaking) spliced into a pause.
+
+    Unlike music cues it plays verbatim: natural length, no looping, no
+    bed-style normalization. `time` is on the original (unstretched) track.
+    """
+
+    time: float
+    clip_id: str
+    reason: str = ""  # label: who/where/when — for the editor and show notes
+    gain: float = 1.0
+
+
+@dataclass
 class CueSheet:
     inserts: list[Insert] = field(default_factory=list)
     underlays: list[Underlay] = field(default_factory=list)
+    clips: list[Clip] = field(default_factory=list)
+
+
+def sheet_from_dict(raw: dict) -> CueSheet:
+    """Parse a trusted cues.json dict (as written by asdict) back into a sheet."""
+    return CueSheet(
+        inserts=[Insert(**i) for i in raw.get("inserts", [])],
+        underlays=[Underlay(**u) for u in raw.get("underlays", [])],
+        clips=[Clip(**c) for c in raw.get("clips", [])],
+    )
 
 
 def _mood(value: str) -> str:
@@ -65,4 +89,12 @@ def validate_cues(raw: dict, total_duration: float) -> CueSheet:
         underlays.append(Underlay(start, end, _mood(item.get("mood", "")),
                                   item.get("reason", ""), item.get("clip_id")))
 
-    return CueSheet(inserts=inserts, underlays=underlays)
+    clips: list[Clip] = []
+    for item in sorted(raw.get("clips", []), key=lambda d: d["time"]):
+        if not item.get("clip_id"):
+            continue
+        time = min(max(float(item["time"]), 0.0), total_duration)
+        gain = min(max(float(item.get("gain", 1.0)), 0.1), 2.0)
+        clips.append(Clip(time, item["clip_id"], item.get("reason", ""), gain))
+
+    return CueSheet(inserts=inserts, underlays=underlays, clips=clips)
