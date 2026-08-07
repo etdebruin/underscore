@@ -77,11 +77,18 @@ def _find_tail(words: list[Word], tail: list[str], start_idx: int) -> tuple[floa
 
 
 def align(weave_text: str, transcript: Transcript) -> list[Clip]:
-    """Place each weave clip right after its anchor tail in the recording."""
+    """Place each weave clip right after its anchor tail in the recording.
+
+    A marker above all narration is the cold open — the episode's first sound,
+    before the host speaks — and lands at time 0 with nothing to anchor on.
+    """
     clips = []
     idx = 0
-    for a in parse_weave(weave_text):
+    for n, a in enumerate(parse_weave(weave_text)):
         if not a.tail:
+            if n == 0:
+                clips.append(Clip(time=0.0, clip_id=a.clip_id, reason=a.label))
+                continue
             raise ValueError(f"clip {a.clip_id} has no narration before it to anchor on")
         end_time, idx = _find_tail(transcript.words, a.tail, idx)
         clips.append(Clip(time=round(end_time, 2), clip_id=a.clip_id, reason=a.label))

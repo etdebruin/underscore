@@ -196,3 +196,21 @@ def test_assemble_output_does_not_clip():
     )
     out = assemble(voice, SR, sheet, speech_spans=[(0.0, 9.8), (10.2, 20.0)])
     assert np.max(np.abs(out)) <= 1.0
+
+
+def test_cold_open_clip_stays_at_the_head_of_the_track():
+    """A clip at time 0 opens the episode; snapping must not drag it into the read."""
+    dur = 30.0
+    voice = np.full(int(SR * dur), 0.2, dtype=np.float32)
+    sheet = CueSheet(clips=[Clip(time=0.0, clip_id="cold-open")])
+    # A silence 4.5s into the read is within snapping distance of 0 — the cold
+    # open must ignore it rather than land in the middle of the first paragraph.
+    out = assemble(
+        voice, SR, sheet, speech_spans=[(0.0, 4.0), (5.0, 30.0)],
+        clip_fn=lambda cid, sr: _const_clip(3.0, value=0.6),
+    )
+    # the clip sits in the padded silence spliced in at the very top
+    assert abs(out[int(CLIP_PAD_PRE * SR) + SR // 2, 0]) > 0.5
+    # ...and the narration has been pushed after it, not overwritten
+    head = int((CLIP_PAD_PRE + 3.0 + CLIP_PAD_POST) * SR)
+    assert abs(out[head + SR // 2, 0]) > 0.1

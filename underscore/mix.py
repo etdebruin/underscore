@@ -199,7 +199,10 @@ def assemble(
         audio = clip_fn(c.clip_id, sr)
         if audio.ndim == 1:
             audio = np.stack([audio, audio], axis=1)
-        clips.append((Clip(snap_to_gap(c.time, gaps), c.clip_id, c.reason, c.gain), audio))
+        # A cold open sits at time 0 by definition — snapping it would drag the
+        # episode's first sound into the middle of the first paragraph.
+        at = c.time if c.time <= 0 else snap_to_gap(c.time, gaps)
+        clips.append((Clip(at, c.clip_id, c.reason, c.gain), audio))
     clips.sort(key=lambda pair: pair[0].time)
 
     splices = sorted(

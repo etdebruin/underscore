@@ -70,3 +70,37 @@ def test_align_raises_when_anchor_not_spoken():
     except ValueError:
         raised = True
     assert raised
+
+
+COLD_OPEN_WEAVE = """[CLIP ilya-q0 | Ilya on the No Priors podcast | "it was obvious to me"]
+
+He landed at the University of Toronto, and that's where the story turns.
+
+[CLIP ilya-q1 | Ilya on stage at NeurIPS, 2015]
+
+That confidence — that was the whole bet.
+"""
+
+
+def test_leading_marker_is_a_cold_open_at_time_zero():
+    """A marker above all narration opens the episode: it plays before the read."""
+    clips = align(COLD_OPEN_WEAVE, _transcript())
+    assert [c.clip_id for c in clips] == ["ilya-q0", "ilya-q1"]
+    assert clips[0].time == 0.0
+    assert clips[0].reason == "Ilya on the No Priors podcast"
+    # the anchored clip still lands after its narration
+    assert clips[1].time > 1.0
+
+
+def test_align_still_raises_for_a_later_clip_with_no_narration_before_it():
+    weave = (
+        "[CLIP q0 | cold open]\n\n"
+        "[CLIP q1 | nothing to anchor on]\n\n"
+        "He landed at the University of Toronto, and that's where the story turns.\n"
+    )
+    try:
+        align(weave, _transcript())
+        raised = False
+    except ValueError:
+        raised = True
+    assert raised
