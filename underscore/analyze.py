@@ -6,6 +6,7 @@ from .cues import Clip, CueSheet, validate_cues
 from .transcribe import Transcript
 
 MODEL = "claude-opus-5"
+MAX_TOKENS = 8192
 
 SYSTEM = """You are an experienced podcast producer scoring an episode with music,
 in the style of a modern narrative news show. You receive a transcript with
@@ -131,12 +132,37 @@ def analyze(
     if clips:
         content += f"\n{_clips_block(clips)}\n"
     content += f"\nTranscript with timestamps:\n\n{_timed_transcript(transcript)}"
-    response = client.messages.parse(
-        model=MODEL,
-        max_tokens=4096,
-        system=system,
-        messages=[{"role": "user", "content": content}],
-        output_format=RawCueSheet,
-    )
-    raw = response.parsed_output
+    raw = _parse_cues(client, system, content)
     return validate_cues(raw.model_dump(), total_duration=transcript.duration)
+
+
+def _parse_cues(client, system: str, content: str):
+    """Get a structured cue sheet, retrying with more room before giving up.
+
+    parsed_output comes back None when the model didn't finish a valid structured
+    response — nearly always because a long episode ran into max_tokens. Retry
+    once with a bigger budget, then fail with the reason instead of an
+    AttributeError three frames away from the cause.
+    """
+    last = None
+    for max_tokens in (MAX_TOKENS, MAX_TOKENS * 2):
+        response = client.messages.parse(
+            model=MODEL,
+            max_tokens=max_tokens,
+            system=system,
+            messages=[{"role": "user", "content": content}],
+            output_format=RawCueSheet,
+        )
+        if response.parsed_output is not None:
+            return response.parsed_output
+        last = response
+
+    reason = getattr(last, "stop_reason", "unknown")
+    text = " ".join(
+        block.text for block in getattr(last, "content", []) if getattr(block, "type", "") == "text"
+    )
+    raise RuntimeError(
+        "the producer returned no usable cue sheet "
+        f"(stop_reason={reason}, max_tokens={MAX_TOKENS * 2}). "
+        f"Model said: {text[:300] or '(nothing)'}"
+    )
