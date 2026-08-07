@@ -16,7 +16,10 @@ SNAP_MAX_DIST = 6.0
 # and only a click-guard fade at the edges — the quote itself plays verbatim.
 CLIP_PAD_PRE = 0.35
 CLIP_PAD_POST = 0.45
-CLIP_EDGE_FADE = 0.02
+CLIP_EDGE_FADE = 0.12  # long enough to ease in over the room tone, not just guard clicks
+ROOM_TONE_WINDOW = 0.6
+DEAD_AIR_FLOOR = 1e-5  # below this a sample is digital zero, not a quiet room
+DEAD_AIR_MIN = 0.15    # shorter holes than this aren't audible as dropouts
 
 UNDERLAY_DUCK = 0.28   # bed gain while speech is present
 UNDERLAY_FULL = 0.85   # bed gain in pauses within an underlay region
@@ -88,6 +91,67 @@ def _smooth(env: np.ndarray, sr: int) -> np.ndarray:
     return np.convolve(env, kernel, mode="same").astype(np.float32)
 
 
+def room_tone(voice: np.ndarray, sr: int, gaps: list[tuple[float, float]]) -> np.ndarray:
+    """The quietest real stretch of the recording — the sound of the room not
+    being spoken in. Splices get filled with this instead of digital silence."""
+    n = int(ROOM_TONE_WINDOW * sr)
+    if voice.shape[0] < n:
+        return np.zeros(0, dtype=np.float32)
+    ranges = [(int(s * sr), int(e * sr)) for s, e in gaps]
+    best = _quietest_window(voice, n, ranges)
+    if best is None:
+        # Every pause was a synthesized join; settle for the quietest moment
+        # anywhere rather than leaving the holes open.
+        best = _quietest_window(voice, n, [(0, voice.shape[0])])
+    return best if best is not None else np.zeros(0, dtype=np.float32)
+
+
+def _quietest_window(voice: np.ndarray, n: int, ranges: list[tuple[int, int]]):
+    """Lowest-RMS window of n samples, ignoring anything already digitally
+    silent — an editing hole is not room tone."""
+    best, best_rms = None, None
+    for a, b in ranges:
+        for i in range(max(a, 0), min(b, voice.shape[0]) - n + 1, max(1, n // 2)):
+            seg = voice[i : i + n]
+            rms = float(np.sqrt(np.mean(seg**2)))
+            if rms <= DEAD_AIR_FLOOR:
+                continue
+            if best_rms is None or rms < best_rms:
+                best, best_rms = seg, rms
+    return best
+
+
+def fill_dead_air(voice: np.ndarray, sr: int, tone: np.ndarray) -> np.ndarray:
+    """Replace stretches of absolute digital silence with room tone.
+
+    Paragraph takes are joined with a synthesized pause, so a long read arrives
+    here punctuated by dozens of holes where the noise floor drops to nothing.
+    Each one reads as the recording cutting out.
+    """
+    if tone.shape[0] == 0:
+        return voice
+    quiet = (np.abs(voice) < DEAD_AIR_FLOOR).astype(np.int8)
+    edges = np.flatnonzero(np.diff(np.concatenate(([0], quiet, [0]))))
+    out = voice.copy()
+    min_n = int(DEAD_AIR_MIN * sr)
+    for start, end in zip(edges[0::2], edges[1::2]):
+        if end - start >= min_n:
+            out[start:end] = fill_with_tone(tone, end - start)
+    return out
+
+
+def fill_with_tone(tone: np.ndarray, n: int) -> np.ndarray:
+    """n samples of room tone. Copies alternate direction so a long fill doesn't
+    develop an audible loop period."""
+    if n <= 0:
+        return np.zeros(max(n, 0), dtype=np.float32)
+    if tone.shape[0] == 0:
+        return np.zeros(n, dtype=np.float32)
+    reps = int(np.ceil(n / tone.shape[0]))
+    chunks = [tone if i % 2 == 0 else tone[::-1] for i in range(reps)]
+    return np.concatenate(chunks)[:n].astype(np.float32)
+
+
 def _place(canvas: np.ndarray, clip: np.ndarray, at: int) -> None:
     """Add a stereo clip onto the canvas at sample offset `at`, clipping to bounds."""
     start = max(at, 0)
@@ -144,12 +208,15 @@ def assemble(
         key=lambda s: s.time,
     )
 
-    # Build the stretched voice track by splicing silence in at each splice point.
+    # Build the stretched track by splicing room tone in at each splice point —
+    # silence that drops to absolute zero reads as the recording stopping.
+    tone = room_tone(voice, sr, gaps)
+    voice = fill_dead_air(voice, sr, tone)
     pieces, cursor = [], 0
     for sp in splices:
         cut = int(sp.time * sr)
         pieces.append(voice[cursor:cut])
-        pieces.append(np.zeros(int(sp.duration * sr), dtype=np.float32))
+        pieces.append(fill_with_tone(tone, int(sp.duration * sr)))
         cursor = cut
     pieces.append(voice[cursor:])
     stretched = np.concatenate(pieces)

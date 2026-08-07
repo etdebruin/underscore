@@ -150,6 +150,43 @@ def test_underlay_ducks_under_clip():
     assert abs(out[clip_center, 0]) < abs(out[open_gap, 0]) * 0.6
 
 
+def test_spliced_gap_carries_room_tone_not_digital_silence():
+    """A hole of absolute silence between two different rooms is what makes a
+    clip sound like the audio stopped and restarted."""
+    rng = np.random.default_rng(0)
+    voice = (rng.standard_normal(SR * 30) * 0.01).astype(np.float32)  # real room floor
+    sheet = CueSheet(clips=[Clip(time=15.0, clip_id="q")])
+    out = assemble(
+        voice, SR, sheet, speech_spans=[(0.0, 14.5), (15.5, 30.0)],
+        clip_fn=lambda cid, sr: np.zeros((SR * 3, 2), dtype=np.float32),
+    )
+    pad = out[int(15.05 * SR) : int(15.3 * SR), 0]
+    assert float(np.sqrt(np.mean(pad**2))) > 0.002, "spliced pad fell to digital silence"
+
+
+def test_dead_air_between_joined_takes_gets_room_tone():
+    """Paragraph takes are joined with synthesized silence, leaving holes in the
+    middle of the read — not just at the clips."""
+    rng = np.random.default_rng(1)
+    voice = (rng.standard_normal(SR * 30) * 0.01).astype(np.float32)
+    voice[int(10 * SR) : int(10.45 * SR)] = 0.0  # a join between two takes
+    sheet = CueSheet()
+    # a natural pause mid-take (real room tone) alongside the synthetic join
+    out = assemble(voice, SR, sheet, speech_spans=[(0.0, 5.0), (6.0, 10.0), (10.45, 30.0)])
+    hole = out[int(10.1 * SR) : int(10.35 * SR), 0]
+    assert float(np.sqrt(np.mean(hole**2))) > 0.002, "join stayed digitally silent"
+
+
+def test_room_tone_fill_invents_nothing_when_the_source_is_silent():
+    voice = np.zeros(SR * 30, dtype=np.float32)
+    sheet = CueSheet(clips=[Clip(time=15.0, clip_id="q")])
+    out = assemble(
+        voice, SR, sheet, speech_spans=[(0.0, 14.5), (15.5, 30.0)],
+        clip_fn=lambda cid, sr: np.zeros((SR * 3, 2), dtype=np.float32),
+    )
+    assert float(np.max(np.abs(out))) == 0.0
+
+
 def test_assemble_output_does_not_clip():
     rng = np.random.default_rng(0)
     voice = (rng.standard_normal(SR * 20) * 0.3).astype(np.float32)
